@@ -10,6 +10,7 @@ import {
   AlertRuleDocument,
   AlertTriggerDocument,
   GroupRef,
+  PurchaseOrderDocument,
 } from "./schema";
 
 const log = createLogger("DB");
@@ -62,6 +63,12 @@ export async function connectDb(): Promise<Db> {
   await alertTriggers.createIndex({ ruleId: 1, triggeredAt: -1 });
   await alertTriggers.createIndex({ msgId: 1 });
 
+  const purchaseOrders = db.collection<PurchaseOrderDocument>("purchaseOrders");
+  await purchaseOrders.createIndex({ poNumber: 1 }, { unique: true });
+  await purchaseOrders.createIndex({ status: 1 });
+  await purchaseOrders.createIndex({ eta: 1 });
+  await purchaseOrders.createIndex({ awaitingReply: 1 });
+
   log.info("Indexes ensured");
   return db;
 }
@@ -97,6 +104,10 @@ export function getAlertRulesCollection(): Collection<AlertRuleDocument> {
 
 export function getAlertTriggersCollection(): Collection<AlertTriggerDocument> {
   return getDb().collection<AlertTriggerDocument>("alertTriggers");
+}
+
+export function getPurchaseOrdersCollection(): Collection<PurchaseOrderDocument> {
+  return getDb().collection<PurchaseOrderDocument>("purchaseOrders");
 }
 
 export async function getTrackedGroups(): Promise<GroupRef[]> {
@@ -267,4 +278,195 @@ export async function seedDefaultRulesIfNeeded(): Promise<void> {
     { $set: { _id: RULES_SEEDED_KEY, value: true, seededAt: now } },
     { upsert: true }
   );
+}
+
+const POS_SEEDED_KEY = "purchaseOrdersSeeded";
+
+/**
+ * 10 demo purchase orders. ETAs are anchored to "now" at seed time so the
+ * dashboard categorisation (late / on-track) is meaningful regardless of when
+ * the user runs this. Statuses are a mix so all dashboard buckets light up.
+ */
+function buildDemoPurchaseOrders(now: Date): Omit<
+  PurchaseOrderDocument,
+  "_id" | "createdAt" | "updatedAt"
+>[] {
+  const day = (offset: number): Date =>
+    new Date(now.getTime() + offset * 24 * 60 * 60 * 1000);
+  return [
+    {
+      poNumber: "PO-1001",
+      productName: "Steel sheets 10mm",
+      companyName: "Acme Steel Ltd",
+      eta: day(-4),
+      status: "delayed",
+      awaitingReply: false,
+      lastUpdateMsgId: null,
+      lastUpdateAt: null,
+      notes: null,
+    },
+    {
+      poNumber: "PO-1002",
+      productName: "Aluminium rods 6m",
+      companyName: "Bharat Metals",
+      eta: day(3),
+      status: "in_transit",
+      awaitingReply: false,
+      lastUpdateMsgId: null,
+      lastUpdateAt: null,
+      notes: null,
+    },
+    {
+      poNumber: "PO-1003",
+      productName: "Copper coil 50kg",
+      companyName: "Vista Wires Co",
+      eta: day(1),
+      status: "ordered",
+      awaitingReply: false,
+      lastUpdateMsgId: null,
+      lastUpdateAt: null,
+      notes: null,
+    },
+    {
+      poNumber: "PO-1004",
+      productName: "HDPE polymer pellets",
+      companyName: "Reliance Polymers",
+      eta: day(9),
+      status: "ordered",
+      awaitingReply: false,
+      lastUpdateMsgId: null,
+      lastUpdateAt: null,
+      notes: null,
+    },
+    {
+      poNumber: "PO-1005",
+      productName: "Stainless bolts M12",
+      companyName: "Mumbai Fasteners",
+      eta: day(-2),
+      status: "delayed",
+      awaitingReply: false,
+      lastUpdateMsgId: null,
+      lastUpdateAt: null,
+      notes: null,
+    },
+    {
+      poNumber: "PO-1006",
+      productName: "Bearing 6204ZZ",
+      companyName: "SKF Distributors",
+      eta: day(4),
+      status: "in_transit",
+      awaitingReply: false,
+      lastUpdateMsgId: null,
+      lastUpdateAt: null,
+      notes: null,
+    },
+    {
+      poNumber: "PO-1007",
+      productName: "Hydraulic oil 200L",
+      companyName: "Lubrizol India",
+      eta: day(13),
+      status: "ordered",
+      awaitingReply: false,
+      lastUpdateMsgId: null,
+      lastUpdateAt: null,
+      notes: null,
+    },
+    {
+      poNumber: "PO-1008",
+      productName: "Electrical cable 16sqmm",
+      companyName: "Polycab Cables",
+      eta: day(2),
+      status: "in_transit",
+      awaitingReply: false,
+      lastUpdateMsgId: null,
+      lastUpdateAt: null,
+      notes: null,
+    },
+    {
+      poNumber: "PO-1009",
+      productName: "PVC pipes 4 inch",
+      companyName: "Astral Pipes",
+      eta: day(7),
+      status: "ordered",
+      awaitingReply: false,
+      lastUpdateMsgId: null,
+      lastUpdateAt: null,
+      notes: null,
+    },
+    {
+      poNumber: "PO-1010",
+      productName: "Welding rods E7018",
+      companyName: "Esab India",
+      eta: day(-3),
+      status: "delivered",
+      awaitingReply: false,
+      lastUpdateMsgId: null,
+      lastUpdateAt: null,
+      notes: null,
+    },
+  ];
+}
+
+/**
+ * Seed the 10 demo purchase orders on first run. Idempotent: a settings flag
+ * prevents the seed from re-running after the user deletes a row, and the
+ * unique index on `poNumber` skips any rows that already exist if someone
+ * forces a re-seed.
+ */
+export async function seedDemoPurchaseOrdersIfNeeded(): Promise<void> {
+  if (!db) return;
+  const settings = db.collection("settings");
+  const flag = await settings.findOne({ _id: POS_SEEDED_KEY } as any);
+  if (flag) return;
+
+  const now = new Date();
+  const collection = getPurchaseOrdersCollection();
+  const existing = await collection.countDocuments();
+
+  if (existing === 0) {
+    const docs = buildDemoPurchaseOrders(now).map((d) => ({
+      ...d,
+      createdAt: now,
+      updatedAt: now,
+    }));
+    await collection.insertMany(docs as any);
+    log.info(`Seeded ${docs.length} demo purchase orders`);
+  } else {
+    log.info(
+      `Skipping demo PO seed — ${existing} purchase order(s) already exist; marking as seeded`
+    );
+  }
+
+  await settings.updateOne(
+    { _id: POS_SEEDED_KEY } as any,
+    { $set: { _id: POS_SEEDED_KEY, value: true, seededAt: now } },
+    { upsert: true }
+  );
+}
+
+/**
+ * Force re-seed (idempotent on poNumber via the unique index). Used by the
+ * `/api/purchase-orders/seed-demo` endpoint when the user wants to refresh
+ * dummy data — wipes existing rows first so ETAs are anchored to "now".
+ */
+export async function reseedDemoPurchaseOrders(): Promise<{
+  inserted: number;
+}> {
+  const now = new Date();
+  const collection = getPurchaseOrdersCollection();
+  await collection.deleteMany({});
+  const docs = buildDemoPurchaseOrders(now).map((d) => ({
+    ...d,
+    createdAt: now,
+    updatedAt: now,
+  }));
+  await collection.insertMany(docs as any);
+  if (db) {
+    await db.collection("settings").updateOne(
+      { _id: POS_SEEDED_KEY } as any,
+      { $set: { _id: POS_SEEDED_KEY, value: true, seededAt: now } },
+      { upsert: true }
+    );
+  }
+  return { inserted: docs.length };
 }

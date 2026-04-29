@@ -197,6 +197,47 @@ export class WhatsAppManager extends EventEmitter {
     return { jids, phoneDigits, name: u.name || null };
   }
 
+  /**
+   * If `jid` is an `@lid`, ask the target group's live metadata for the
+   * matching participant's phone JID (`<digits>@s.whatsapp.net`). Returns
+   * null when the group can't be fetched, the participant isn't found, or
+   * the participant has no phone JID exposed (rare). Best-effort — never
+   * throws; logs and returns null on failure so the caller can drop the
+   * mention silently.
+   */
+  private async tryUpgradeLidToPhone(
+    groupJid: string,
+    jid: string
+  ): Promise<string | null> {
+    if (!this.sock) return null;
+    if (!jid.toLowerCase().endsWith("@lid")) return null;
+    if (!groupJid.endsWith("@g.us")) return null;
+    try {
+      const meta = await this.sock.groupMetadata(groupJid);
+      const participants: any[] = (meta as any).participants || [];
+      const lidDigits = jid.split("@")[0].split(":")[0];
+      const match = participants.find((p) => {
+        const candidates: string[] = [];
+        if (p.lid) candidates.push(p.lid);
+        if (p.id) candidates.push(p.id);
+        if (p.jid) candidates.push(p.jid);
+        return candidates.some((c) => {
+          const d = String(c).split("@")[0].split(":")[0];
+          return d === lidDigits;
+        });
+      });
+      if (!match) return null;
+      const phoneCandidates = [match.phoneNumber, match.id, match.jid].filter(
+        (x) =>
+          typeof x === "string" && x.toLowerCase().endsWith("@s.whatsapp.net")
+      );
+      return phoneCandidates[0] || null;
+    } catch (err: any) {
+      log.warn(`tryUpgradeLidToPhone failed for ${jid}: ${err.message}`);
+      return null;
+    }
+  }
+
   private setStatus(status: WhatsAppStatus, extra?: Partial<StatusEvent>): void {
     this._status = status;
     this.lastStatusMessage = extra?.message || "";
@@ -712,39 +753,105 @@ export class WhatsAppManager extends EventEmitter {
   async sendTextMessage(
     jid: string,
     text: string,
-    mentions?: string[]
+    mentions?: Array<string | { jid: string; name?: string }>
   ): Promise<{ success: boolean; error?: string }> {
     if (!this.sock || this._status !== "ready") {
       return { success: false, error: "WhatsApp not connected" };
     }
     try {
+      // Normalise to { jid, name? } objects, supporting the legacy plain-string form.
+      const normalised = (mentions || [])
+        .map((m) =>
+          typeof m === "string"
+            ? { jid: m, name: undefined }
+            : m && typeof m === "object" && typeof m.jid === "string"
+            ? { jid: m.jid, name: typeof m.name === "string" ? m.name : undefined }
+            : null
+        )
+        .filter((m): m is { jid: string; name: string | undefined } => !!m && m.jid.includes("@"));
+
       // Only `@s.whatsapp.net` phone JIDs render as proper mention pills in WA.
-      // `@lid` JIDs do not render — drop them so we don't pollute the text with
-      // raw LID digits that the receiver's WhatsApp would just show as gibberish.
-      const allMentions = (mentions || []).filter(
-        (m): m is string => typeof m === "string" && m.includes("@")
+      // `@lid` JIDs do not render — but before dropping them, try to upgrade
+      // each one to a phone JID by inspecting the target group's live
+      // participant list (Baileys exposes phone + LID per participant).
+      const upgraded: { jid: string; name: string | undefined }[] = [];
+      for (const m of normalised) {
+        if (m.jid.toLowerCase().endsWith("@s.whatsapp.net")) {
+          upgraded.push(m);
+          continue;
+        }
+        const phoneJid = await this.tryUpgradeLidToPhone(jid, m.jid);
+        if (phoneJid) {
+          log.info(
+            `[mentions] upgraded ${m.jid} → ${phoneJid} via group metadata`
+          );
+          upgraded.push({ jid: phoneJid, name: m.name });
+        } else {
+          upgraded.push(m); // will get dropped below, with a warning
+        }
+      }
+      const phoneOnly = upgraded.filter((m) =>
+        m.jid.toLowerCase().endsWith("@s.whatsapp.net")
       );
-      const phoneJids = allMentions.filter((m) =>
-        m.toLowerCase().endsWith("@s.whatsapp.net")
-      );
-      const droppedLid = allMentions.length - phoneJids.length;
+      const droppedLid = upgraded.length - phoneOnly.length;
       if (droppedLid > 0) {
         log.warn(
           `[mentions] dropped ${droppedLid} non-phone JID(s) — they would not render as tags in WhatsApp`
         );
       }
+      // Never tag the connected user themselves on outbound follow-ups —
+      // an @-mention is meant to ping the supplier we're chasing, not us.
+      const ownDigits = new Set(this.getOwnIdentity().phoneDigits);
+      const phoneMentions = phoneOnly.filter((m) => {
+        const digits = m.jid.split("@")[0].split(":")[0];
+        if (digits && ownDigits.has(digits)) {
+          log.warn(`[mentions] dropping self-mention for ${digits} on outbound message`);
+          return false;
+        }
+        return true;
+      });
 
-      // For @-mentions to actually display, the body must contain `@<phoneDigits>`
-      // tokens that match the JIDs in the `mentions` array. Prepend any missing
-      // tokens — but only for phone JIDs we know will render.
+      // Step 1: For each mention with a display name, anchor the pill on the
+      // first occurrence of the name. We accept TWO author conventions:
+      //   (a) `@John` — already tagged. We just swap the name for digits.
+      //   (b) `John`  — bare name (this is how AI-drafted follow-ups read,
+      //                 e.g. "Hi Enrique, following up..."). We splice the @
+      //                 onto the first occurrence so WhatsApp renders a pill
+      //                 right where the name appears.
       let finalText = text;
+      for (const m of phoneMentions) {
+        const digits = m.jid.split("@")[0];
+        const name = m.name?.trim();
+        if (!digits || !name) continue;
+
+        // (a) tagged form first — global so multiple "@John"s all get swapped.
+        const taggedRe = new RegExp(`@${escapeRegex(name)}\\b`, "gi");
+        if (taggedRe.test(finalText)) {
+          finalText = finalText.replace(taggedRe, `@${digits}`);
+          continue;
+        }
+
+        // (b) bare name form — replace only the FIRST occurrence; replacing
+        // every "John" in a long message would be too aggressive (e.g. "ask
+        // John to confirm with John's team").
+        const bareRe = new RegExp(`\\b${escapeRegex(name)}\\b`, "i");
+        if (bareRe.test(finalText)) {
+          finalText = finalText.replace(bareRe, `@${digits}`);
+        }
+      }
+
+      // Step 2: For @-mentions to render, the body must contain `@<phoneDigits>`
+      // tokens that match each JID in the `mentions` array. Prepend any missing
+      // tokens (e.g. when the composer used the JID without a name, or the user
+      // edited the name out).
+      const phoneJids = phoneMentions.map((m) => m.jid);
       if (phoneJids.length > 0) {
-        const tokensInText = (text.match(/@\d+/g) || []).map((t) => t.slice(1));
+        const tokensInText = (finalText.match(/@\d+/g) || []).map((t) => t.slice(1));
         const missing = phoneJids
-          .map((m) => m.split("@")[0])
+          .map((j) => j.split("@")[0])
           .filter((digits) => digits && !tokensInText.includes(digits));
         if (missing.length > 0) {
-          finalText = missing.map((d) => `@${d}`).join(" ") + " " + text;
+          finalText = missing.map((d) => `@${d}`).join(" ") + " " + finalText;
         }
       }
 
@@ -780,6 +887,10 @@ export class WhatsAppManager extends EventEmitter {
       return [];
     }
   }
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 // Singleton

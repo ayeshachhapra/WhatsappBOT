@@ -12,7 +12,7 @@ const router = Router();
 
 router.post("/", async (req, res) => {
   try {
-    const { draftText, targetGroups, label, meta, mentionJids } = req.body;
+    const { draftText, targetGroups, label, meta, mentionJids, mentions } = req.body;
     if (!draftText || typeof draftText !== "string") {
       return res.status(400).json({ error: "draftText is required" });
     }
@@ -41,7 +41,8 @@ router.post("/", async (req, res) => {
               typeof meta.triggerSender === "string" ? meta.triggerSender : undefined,
           }
         : undefined;
-    const cleanMentions =
+    const cleanMentions = sanitiseMentions(mentions);
+    const cleanMentionJids =
       Array.isArray(mentionJids)
         ? mentionJids.filter((m) => typeof m === "string" && m.includes("@"))
         : undefined;
@@ -51,13 +52,30 @@ router.post("/", async (req, res) => {
       targetGroups,
       label: typeof label === "string" ? label : undefined,
       meta: cleanMeta,
-      mentionJids: cleanMentions,
+      mentions: cleanMentions,
+      mentionJids: cleanMentionJids,
     });
     res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
+
+function sanitiseMentions(input: unknown):
+  | { jid: string; name?: string }[]
+  | undefined {
+  if (!Array.isArray(input)) return undefined;
+  const out: { jid: string; name?: string }[] = [];
+  for (const m of input) {
+    if (m && typeof m === "object" && typeof (m as any).jid === "string") {
+      const jid = (m as any).jid;
+      if (!jid.includes("@")) continue;
+      const name = typeof (m as any).name === "string" ? (m as any).name : undefined;
+      out.push({ jid, ...(name ? { name } : {}) });
+    }
+  }
+  return out.length > 0 ? out : undefined;
+}
 
 router.get("/", async (req, res) => {
   try {

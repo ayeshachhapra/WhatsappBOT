@@ -11,6 +11,36 @@
   --warn: #d29922;
 }
 
+:root[data-theme="light"] {
+  --bg: #f6f8fa;
+  --panel: #ffffff;
+  --panel-2: #f0f3f6;
+  --border: #d0d7de;
+  --text: #1f2328;
+  --muted: #656d76;
+  --accent: #1a8a45;
+  --accent-dim: #0f6b35;
+  --danger: #cf222e;
+  --warn: #9a6700;
+}
+
+:root[data-theme="light"] .btn-warn { color: #fff; }
+:root[data-theme="light"] .qr-box img { background: #f6f8fa; }
+:root[data-theme="light"] .modal-overlay { background: rgba(15, 23, 42, 0.4); }
+:root[data-theme="light"] .alert-card.danger { background: rgba(207, 34, 46, 0.05); }
+:root[data-theme="light"] .alert-card.info { background: rgba(26, 138, 69, 0.05); }
+:root[data-theme="light"] .chip {
+  background: rgba(26, 138, 69, 0.1);
+  color: var(--accent-dim);
+}
+:root[data-theme="light"] .follow-up-card {
+  background: #f0faf4;
+  border-color: #b8e8b0;
+}
+:root[data-theme="light"] .follow-up-tagging {
+  background: rgba(26, 138, 69, 0.08);
+}
+
 * { box-sizing: border-box; }
 html, body, #root { margin: 0; padding: 0; height: 100%; }
 body {
@@ -26,6 +56,40 @@ a:hover { text-decoration: underline; }
 .app {
   display: flex;
   min-height: 100vh;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 40px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+}
+.theme-toggle:hover { background: var(--panel-2); }
+
+.main-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 .sidebar {
@@ -65,6 +129,55 @@ a:hover { text-decoration: underline; }
   flex: 1;
   padding: 30px 40px;
   overflow-y: auto;
+  /* Allow flex children (e.g. .chat-window with height: 100%) to compute
+     their height against this container instead of stretching past it. */
+  min-height: 0;
+}
+
+.view-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.view-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+}
+.view-card .view-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  gap: 8px;
+}
+.view-card .view-head h3 { margin: 0; font-size: 15px; }
+.view-card .view-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
+.view-card .view-row {
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--panel-2);
+}
+.view-card.danger { border-left: 3px solid var(--danger); }
+.view-card.warn { border-left: 3px solid var(--warn); }
+.view-card.ok { border-left: 3px solid var(--accent); }
+.view-card .view-empty {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 14px 0;
+  text-align: center;
 }
 
 h2 { margin-top: 0; }
@@ -169,8 +282,11 @@ label {
 .chat-window {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 60px);
-  max-height: calc(100vh - 60px);
+  /* Fill the .main container exactly — relying on 100vh breaks once the
+     topbar / main padding / page heading eat into the viewport, which used
+     to push the input row below the fold (only visible after scrolling). */
+  height: 100%;
+  min-height: 0;
 }
 .chat-window.embedded {
   height: auto;
@@ -193,8 +309,16 @@ label {
   max-width: 80%;
 }
 .chat-msg.user {
-  background: var(--accent-dim);
+  /* WhatsApp-style outbound bubble. Light mint in light mode, deeper green
+     with white text in dark mode — keeps contrast comfortable in both. */
+  background: #005c4b;
+  color: #fff;
   margin-left: auto;
+}
+:root[data-theme="light"] .chat-msg.user {
+  background: #d9fdd3;
+  color: #111b21;
+  border: 1px solid #b8e8b0;
 }
 .chat-msg.assistant {
   background: var(--panel);
@@ -288,26 +412,86 @@ label {
 /* ── Follow-up suggestion card inside chat ── */
 .follow-up-card {
   margin-top: 14px;
-  padding: 12px 14px;
+  padding: 14px 16px;
   background: rgba(37, 211, 102, 0.08);
   border: 1px solid var(--accent-dim);
-  border-radius: 8px;
+  border-radius: 10px;
 }
 .follow-up-head {
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.follow-up-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+}
+.follow-up-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
+}
+.follow-up-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.follow-up-chip strong {
+  color: var(--text);
+  font-weight: 500;
 }
 .follow-up-body {
   background: var(--panel-2);
-  padding: 10px 12px;
-  border-radius: 6px;
+  padding: 12px 14px;
+  border-radius: 8px;
   margin-bottom: 10px;
   font-size: 14px;
+  line-height: 1.45;
   white-space: pre-wrap;
   border: 1px solid var(--border);
+}
+.follow-up-tagging {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 12px;
+  padding: 6px 10px;
+  background: rgba(37, 211, 102, 0.06);
+  border-left: 2px solid var(--accent-dim);
+  border-radius: 4px;
+}
+.follow-up-tagging-icon {
+  flex-shrink: 0;
+}
+.follow-up-tagging strong {
+  color: var(--text);
+}
+.follow-up-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.follow-up-actions .btn {
+  padding: 7px 16px;
+  font-size: 13px;
+  flex: 0 0 auto;
+}
+.follow-up-done {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 0;
 }
 
 /* ── Follow-up history meta context block ── */

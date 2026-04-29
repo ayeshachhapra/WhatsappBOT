@@ -22,6 +22,11 @@ interface OrderSummary {
   dueDate: Date | null;
   status: OrderStatus;
   lastBody: string;
+  /**
+   * True when the most recent message tagged with this reference was sent by us
+   * (a follow-up asking about ETA / status), and no reply has come in since.
+   */
+  lastFromMe: boolean;
 }
 
 router.get("/", async (req, res) => {
@@ -44,6 +49,10 @@ router.get("/", async (req, res) => {
             senders: { $addToSet: "$sender" },
             dueDates: { $push: "$dueDate" },
             bodies: { $push: "$body" },
+            // After the $sort above (timestamp DESC), $first captures the most
+            // recent message tagged with this reference — used to detect
+            // "we asked, they haven't replied" (lastFromMe === true).
+            lastFromMe: { $first: "$fromMe" },
           },
         },
         { $sort: { lastAt: -1 } },
@@ -73,6 +82,7 @@ router.get("/", async (req, res) => {
         dueDate,
         status,
         lastBody: lastBody.slice(0, 250),
+        lastFromMe: row.lastFromMe === true,
       };
     });
 

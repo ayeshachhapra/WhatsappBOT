@@ -15,6 +15,7 @@ import {
   DraftDocument,
   DraftMeta,
   GroupRef,
+  MentionRef,
 } from "../db/schema";
 import createLogger from "../utils/logger";
 
@@ -205,7 +206,19 @@ interface SendBatchInput {
   draftId: ObjectId | null;
   messageText: string;
   targetGroups: GroupRef[];
-  mentionJids?: string[];
+  mentions?: MentionRef[];
+}
+
+/** Build a mention list from either the new {jid,name} shape or the legacy bare JID array. */
+function resolveMentions(
+  mentions?: MentionRef[],
+  mentionJids?: string[]
+): MentionRef[] | undefined {
+  if (mentions && mentions.length > 0) return mentions;
+  if (mentionJids && mentionJids.length > 0) {
+    return mentionJids.map((jid) => ({ jid }));
+  }
+  return undefined;
 }
 
 async function sendBatch(
@@ -237,7 +250,7 @@ async function sendBatch(
     const result = await whatsapp.sendTextMessage(
       group.jid,
       input.messageText,
-      input.mentionJids
+      input.mentions
     );
 
     await sendLog.insertOne({
@@ -273,7 +286,7 @@ async function sendNow(
     draftId,
     messageText,
     targetGroups: schedule.targetGroups,
-    mentionJids: schedule.mentionJids,
+    mentions: resolveMentions(schedule.mentions, schedule.mentionJids),
   });
 
   await getScheduledMessagesCollection().updateOne(
@@ -324,6 +337,8 @@ export async function createManualDraft(input: {
   targetGroups: GroupRef[];
   label?: string;
   meta?: DraftMeta;
+  mentions?: MentionRef[];
+  /** @deprecated use `mentions` */
   mentionJids?: string[];
 }): Promise<{ id: string }> {
   if (!input.draftText || !input.draftText.trim()) {
@@ -332,13 +347,14 @@ export async function createManualDraft(input: {
   if (!Array.isArray(input.targetGroups) || input.targetGroups.length === 0) {
     throw new Error("at least one target group is required");
   }
+  const mentions = resolveMentions(input.mentions, input.mentionJids);
   const drafts = getDraftsCollection();
   const result = await drafts.insertOne({
     scheduleId: null,
     scheduleName: input.label || "Manual follow-up",
     draftText: input.draftText.trim(),
     targetGroups: input.targetGroups,
-    mentionJids: input.mentionJids,
+    mentions,
     status: "pending",
     source: "manual",
     meta: input.meta || null,
@@ -355,6 +371,8 @@ export async function createAutoChaseSchedule(input: {
   name: string;
   messageText: string;
   targetGroups: GroupRef[];
+  mentions?: MentionRef[];
+  /** @deprecated use `mentions` */
   mentionJids?: string[];
   time: string; // HH:mm
   cadenceDays?: number; // 1 = daily; 2 = every 2 days, etc — currently informational only
@@ -367,13 +385,14 @@ export async function createAutoChaseSchedule(input: {
   }
   const collection = getScheduledMessagesCollection();
   const now = new Date();
+  const mentions = resolveMentions(input.mentions, input.mentionJids);
   const doc: ScheduledMessageDocument = {
     name: input.name || "Auto-chase",
     mode: "static",
     messageText: input.messageText,
     aiPrompt: null,
     targetGroups: input.targetGroups,
-    mentionJids: input.mentionJids,
+    mentions,
     schedule: { times: [input.time], days: [] },
     enabled: true,
     autoSend: true,
@@ -422,6 +441,8 @@ export async function approveDraft(
 
   let result: { success: boolean; errors: string[] };
 
+  const draftMentions = resolveMentions(draft.mentions, draft.mentionJids);
+
   if (draft.scheduleId) {
     const sched = await getScheduledMessagesCollection().findOne({
       _id: draft.scheduleId,
@@ -434,7 +455,7 @@ export async function approveDraft(
         draftId: draft._id ?? null,
         messageText: draft.draftText,
         targetGroups: draft.targetGroups,
-        mentionJids: draft.mentionJids,
+        mentions: draftMentions,
       });
     } else {
       result = await sendNow(sched, draft.draftText, draft._id ?? null);
@@ -447,7 +468,7 @@ export async function approveDraft(
       draftId: draft._id ?? null,
       messageText: draft.draftText,
       targetGroups: draft.targetGroups,
-      mentionJids: draft.mentionJids,
+      mentions: draftMentions,
     });
   }
 

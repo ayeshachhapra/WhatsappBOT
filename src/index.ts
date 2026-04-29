@@ -4,6 +4,7 @@ import {
   createVectorIndex,
   disconnectDb,
   seedDefaultRulesIfNeeded,
+  seedDemoPurchaseOrdersIfNeeded,
 } from "./db/mongo";
 import { whatsapp } from "./whatsapp/manager";
 import { startScheduler, stopScheduler } from "./scheduler";
@@ -21,6 +22,7 @@ async function main() {
   await connectDb();
   await createVectorIndex();
   await seedDefaultRulesIfNeeded();
+  await seedDemoPurchaseOrdersIfNeeded();
 
   const server = startHttpServer();
   startScheduler();

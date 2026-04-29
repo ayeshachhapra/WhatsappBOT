@@ -36,6 +36,17 @@ export interface GroupRef {
   name: string;
 }
 
+/**
+ * A WhatsApp @-mention. `jid` must be a phone JID (`<digits>@s.whatsapp.net`).
+ * If `name` is provided, the manager will substitute `@<name>` (case-insensitive)
+ * tokens in the body with `@<digits>` so the recipient sees an inline mention pill
+ * where the name appears.
+ */
+export interface MentionRef {
+  jid: string;
+  name?: string;
+}
+
 export interface GroupFiltersDocument {
   _id: string; // always "default"
   groups: GroupRef[];
@@ -64,8 +75,10 @@ export interface ScheduledMessageDocument {
    * Used by "auto-chase until response" follow-ups created from chat.
    */
   stopOnResponse?: boolean;
-  /** Optional WhatsApp JIDs to @-mention in the outbound message. */
+  /** Optional WhatsApp JIDs to @-mention in the outbound message (legacy shape). */
   mentionJids?: string[];
+  /** Optional rich @-mentions with display names for inline substitution. */
+  mentions?: MentionRef[];
   lastSentAt: Date | null;
   lastSendResult: string | null;
   sendCount: number;
@@ -87,8 +100,10 @@ export interface DraftDocument {
   scheduleName: string;
   draftText: string;
   targetGroups: GroupRef[];
-  /** Optional WhatsApp JIDs to @-mention when this draft is sent. */
+  /** Optional WhatsApp JIDs to @-mention when this draft is sent (legacy shape). */
   mentionJids?: string[];
+  /** Optional rich @-mentions with display names for inline substitution. */
+  mentions?: MentionRef[];
   status: DraftStatus;
   source: "schedule" | "manual";
   meta: DraftMeta | null;
@@ -122,6 +137,40 @@ export interface AlertRuleDocument {
   /** Optional groupJid scope; empty = all tracked groups. */
   groupJids: string[];
   enabled: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export type PurchaseOrderStatus =
+  | "ordered"
+  | "in_transit"
+  | "delayed"
+  | "delivered"
+  | "unknown";
+
+/**
+ * Master record for a purchase order being tracked. POs are seeded or created
+ * by the user, and enriched in-place by the message pipeline whenever an
+ * incoming WhatsApp message in a tracked group mentions the PO number.
+ */
+export interface PurchaseOrderDocument {
+  _id?: ObjectId;
+  /** Canonical PO/AWB/invoice reference. Compared case-insensitively. */
+  poNumber: string;
+  productName: string;
+  companyName: string;
+  /** Expected delivery date — may be revised by incoming messages. */
+  eta: Date | null;
+  status: PurchaseOrderStatus;
+  /** True after we sent a follow-up that mentioned this PO and the supplier
+   *  hasn't replied since. Flips to false the moment a non-fromMe message in
+   *  the same group references this PO. */
+  awaitingReply: boolean;
+  /** Last message that touched this PO (any direction). */
+  lastUpdateMsgId: string | null;
+  lastUpdateAt: Date | null;
+  /** Optional free-form notes (manual entry only). */
+  notes: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

@@ -65,7 +65,11 @@ ${digest}
 
 User's intent for this follow-up: ${input.aiPrompt || "(no specific intent provided — write a polite, contextual nudge)"}
 
-Write a concise, friendly WhatsApp message (max 600 characters). Plain text, no markdown, no emojis unless natural. Do not include greetings like "Dear all" — keep it casual and direct, as you would in a WhatsApp group. Return ONLY the message body, nothing else.`;
+Write a concise, friendly WhatsApp message (max 600 characters). Plain text, no markdown, no emojis unless natural. Do not include greetings like "Dear all" — keep it casual and direct, as you would in a WhatsApp group.
+
+If you address a specific person by name (e.g. the supplier we are chasing), prefix their first name with an @ sign so it can be rendered as a WhatsApp mention pill — for example "Hi @Enrique, any update on PO #1001?" rather than "Hi Enrique, ...". Use this only for actual recipients, not when referencing third parties.
+
+Return ONLY the message body, nothing else.`;
 
   const client = getGeminiClient();
   const model = client.getGenerativeModel({

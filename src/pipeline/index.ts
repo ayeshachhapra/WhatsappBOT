@@ -6,8 +6,9 @@ import {
   getTrackedGroups,
   getAlertRulesCollection,
   getAlertTriggersCollection,
+  getPurchaseOrdersCollection,
 } from "../db/mongo";
-import { MessageDocument } from "../db/schema";
+import { MessageDocument, PurchaseOrderStatus } from "../db/schema";
 import createLogger from "../utils/logger";
 
 const log = createLogger("Pipeline");
@@ -200,6 +201,16 @@ async function processMessage(msg: IncomingMessage): Promise<PipelineResult> {
     summary: extracted.summary,
   });
 
+  // ── Purchase-order enrichment ──
+  await updatePurchaseOrdersFromMessage({
+    msgId: msg.msgId,
+    fromMe: !!msg.fromMe,
+    body,
+    referenceNumbers: extracted.referenceNumbers || [],
+    dueDate: extracted.dueDate,
+    timestamp: msg.timestamp,
+  });
+
   log.info(
     `[done] ${msg.msgId} stored+enriched in ${Date.now() - start}ms (topic="${extracted.topic}")`
   );
@@ -265,4 +276,84 @@ async function evaluateAlertRules(input: {
   } catch (err: any) {
     log.warn(`Alert rule evaluation failed: ${err.message}`);
   }
+}
+
+const PO_RESOLVED_RE = /\b(delivered|received|completed|done|pod|signed|closed)\b/i;
+const PO_DISPATCHED_RE =
+  /\b(dispatch|dispatched|shipped|out for delivery|in transit|picked up|left)\b/i;
+const PO_DELAYED_RE = /\b(delay|delayed|late|hold|stuck|pending)\b/i;
+
+function inferPoStatusFromBody(
+  body: string,
+  current: PurchaseOrderStatus
+): PurchaseOrderStatus {
+  if (PO_RESOLVED_RE.test(body)) return "delivered";
+  if (PO_DISPATCHED_RE.test(body)) return "in_transit";
+  if (PO_DELAYED_RE.test(body)) return "delayed";
+  // Don't downgrade from in_transit → ordered just because the message has no
+  // status verb; only update when we can actually infer something.
+  return current;
+}
+
+/**
+ * Apply a freshly-stored message to the purchase-order master table:
+ *  - Match each `referenceNumbers` token against `poNumber` (case-insensitive).
+ *  - Re-infer status from the body (delivered/in_transit/delayed).
+ *  - Pull a fresher `eta` if the message carries a `dueDate`.
+ *  - Flip `awaitingReply` based on direction:
+ *      fromMe = true  → we just chased; supplier hasn't replied yet.
+ *      fromMe = false → supplier responded; clear the awaiting flag.
+ */
+async function updatePurchaseOrdersFromMessage(input: {
+  msgId: string;
+  fromMe: boolean;
+  body: string;
+  referenceNumbers: string[];
+  dueDate: Date | string | null | undefined;
+  timestamp: Date;
+}): Promise<void> {
+  if (!input.referenceNumbers || input.referenceNumbers.length === 0) return;
+  try {
+    const collection = getPurchaseOrdersCollection();
+    // Case-insensitive match on poNumber for each ref the message carries.
+    const refs = input.referenceNumbers.map((r) => r.trim()).filter(Boolean);
+    if (refs.length === 0) return;
+    const matches = await collection
+      .find({
+        $or: refs.map((r) => ({
+          poNumber: { $regex: `^${escapeRegex(r)}$`, $options: "i" },
+        })),
+      })
+      .toArray();
+    if (matches.length === 0) return;
+
+    const newDueDate = input.dueDate ? new Date(input.dueDate) : null;
+    const now = new Date();
+    for (const po of matches) {
+      const newStatus = inferPoStatusFromBody(input.body, po.status);
+      const set: Record<string, unknown> = {
+        lastUpdateMsgId: input.msgId,
+        lastUpdateAt: input.timestamp,
+        updatedAt: now,
+        // fromMe = our follow-up went out → still waiting for a reply
+        // !fromMe = supplier (or anyone else) sent the message → reply received
+        awaitingReply: !!input.fromMe,
+      };
+      if (newStatus !== po.status) set.status = newStatus;
+      if (newDueDate) set.eta = newDueDate;
+
+      await collection.updateOne({ _id: po._id }, { $set: set });
+      log.info(
+        `[po] ${po.poNumber} updated from msg ${input.msgId} — status=${
+          newStatus
+        }${newDueDate ? `, eta=${newDueDate.toISOString().slice(0, 10)}` : ""}, awaitingReply=${set.awaitingReply}`
+      );
+    }
+  } catch (err: any) {
+    log.warn(`Purchase-order update failed: ${err.message}`);
+  }
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

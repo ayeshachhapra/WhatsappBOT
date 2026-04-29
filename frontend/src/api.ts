@@ -55,6 +55,28 @@ export interface MessageDoc {
   createdAt: string;
 }
 
+export type PurchaseOrderStatus =
+  | "ordered"
+  | "in_transit"
+  | "delayed"
+  | "delivered"
+  | "unknown";
+
+export interface PurchaseOrder {
+  _id: string;
+  poNumber: string;
+  productName: string;
+  companyName: string;
+  eta: string | null;
+  status: PurchaseOrderStatus;
+  awaitingReply: boolean;
+  lastUpdateMsgId: string | null;
+  lastUpdateAt: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface OrderSummary {
   ref: string;
   count: number;
@@ -65,6 +87,8 @@ export interface OrderSummary {
   dueDate: string | null;
   status: "delivered" | "in_transit" | "delayed" | "ordered" | "unknown";
   lastBody: string;
+  /** True when the most recent message tagged with this ref was sent by us. */
+  lastFromMe: boolean;
 }
 
 export interface SenderSummary {

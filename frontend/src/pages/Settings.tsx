@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, GroupRef } from "../api";
 import GroupPicker from "../components/GroupPicker";
-import Rules from "./Rules";
 
 interface Status {
   status: string;
@@ -85,7 +84,7 @@ export default function Settings() {
     <div>
       <h2 style={{ margin: "0 0 6px" }}>Settings</h2>
       <p className="muted" style={{ marginBottom: 20 }}>
-        Pair your WhatsApp account, choose tracked groups, and configure keyword alerts.
+        Pair your WhatsApp account and choose the groups to track.
       </p>
 
       <div className="card">
@@ -174,15 +173,6 @@ export default function Settings() {
           </div>
         )}
       </div>
-
-      <div className="section-header">
-        <h3>Alert Rules</h3>
-      </div>
-      <p className="muted" style={{ marginTop: 0, marginBottom: 12 }}>
-        Get notified the moment certain words appear in any tracked group — delays,
-        cancellations, customs holds, etc.
-      </p>
-      <Rules embedded />
     </div>
   );
 }
