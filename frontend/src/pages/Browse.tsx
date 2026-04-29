@@ -104,7 +104,7 @@ export default function Browse() {
         }}
       >
         <div>
-          <h2 style={{ margin: "0 0 6px" }}>Tracking</h2>
+          <h2 style={{ margin: "0 0 6px" }}>Track</h2>
           <p className="muted" style={{ marginBottom: 16 }}>
             Master list of purchase orders. Each row is updated automatically as
             messages arrive in your tracked WhatsApp groups that mention the PO number.

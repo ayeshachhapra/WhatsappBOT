@@ -168,6 +168,70 @@ export interface DraftDoc {
   sendError: string | null;
 }
 
+export type OutboxSource = "ai_chat" | "schedule" | "agent";
+export type OutboxStatus =
+  | "pending"
+  | "sent"
+  | "rejected"
+  | "approved"
+  | "failed";
+
+export interface OutboxItem {
+  id: string;
+  source: OutboxSource;
+  status: OutboxStatus;
+  createdAt: string;
+  sentAt: string | null;
+  text: string;
+  targetGroups: GroupRef[];
+  refs: string[];
+  draftId: string | null;
+  agentActionId: string | null;
+  scheduleName: string | null;
+  chatQuestion: string | null;
+  chatAnswerSnippet: string | null;
+  triggerSender: string | null;
+  triggerMsgId: string | null;
+  reasoning: string | null;
+  decision: string | null;
+  mentionName: string | null;
+  mentionJid: string | null;
+  error: string | null;
+}
+
+export interface OutboxStats {
+  pendingReview: number;
+  sentToday: number;
+  agentAuto24h: number;
+  failed: number;
+}
+
+export type AttentionPriority = "critical" | "high" | "medium";
+export type AttentionType =
+  | "po_unreachable"
+  | "po_late"
+  | "po_long_silence"
+  | "agent_escalation"
+  | "pending_draft";
+
+export interface AttentionItem {
+  id: string;
+  type: AttentionType;
+  priority: AttentionPriority;
+  headline: string;
+  description: string;
+  actionRoute: string;
+  actionLabel: string;
+  score: number;
+  refs: string[];
+  askQuery: string;
+}
+
+export interface AttentionBriefing {
+  narrative: string;
+  items: AttentionItem[];
+}
+
 export type AgentDecision =
   | "none"
   | "ask_clarifying"

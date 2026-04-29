@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, MessageDoc, PurchaseOrder, PurchaseOrderStatus } from "../api";
+import {
+  api,
+  AttentionBriefing,
+  AttentionItem,
+  AttentionPriority,
+  MessageDoc,
+  PurchaseOrder,
+  PurchaseOrderStatus,
+} from "../api";
 
 interface AlertsResponse {
   summary: {
@@ -43,18 +51,21 @@ const STATUS_LABEL: Record<PurchaseOrderStatus, string> = {
 export default function Dashboard({ embedded = false }: DashboardProps = {}) {
   const [alerts, setAlerts] = useState<AlertsResponse | null>(null);
   const [pos, setPos] = useState<PurchaseOrder[]>([]);
+  const [briefing, setBriefing] = useState<AttentionBriefing | null>(null);
   const [loading, setLoading] = useState(false);
   const [openAll, setOpenAll] = useState<ViewKind | null>(null);
 
   async function load() {
     setLoading(true);
     try {
-      const [alertsRes, posRes] = await Promise.all([
+      const [alertsRes, posRes, briefingRes] = await Promise.all([
         api.get<AlertsResponse>("/api/alerts"),
         api.get<{ orders: PurchaseOrder[] }>("/api/purchase-orders"),
+        api.get<AttentionBriefing>("/api/dashboard/attention").catch(() => null),
       ]);
       setAlerts(alertsRes);
       setPos(posRes.orders);
+      setBriefing(briefingRes);
     } catch {
       // ignore
     } finally {
@@ -76,7 +87,7 @@ export default function Dashboard({ embedded = false }: DashboardProps = {}) {
   if (!alerts && loading) {
     return (
       <div>
-        {!embedded && <h2>Dashboard</h2>}
+        {!embedded && <h2>Today's Pulse</h2>}
         <p className="muted">Loading...</p>
       </div>
     );
@@ -95,16 +106,18 @@ export default function Dashboard({ embedded = false }: DashboardProps = {}) {
               alignItems: "center",
             }}
           >
-            <h2 style={{ margin: 0 }}>Dashboard</h2>
+            <h2 style={{ margin: 0 }}>Today's Pulse</h2>
             <button className="btn-secondary btn" onClick={load} disabled={loading}>
               {loading ? "..." : "Refresh"}
             </button>
           </div>
           <p className="muted">
-            Master view of tracked POs. Auto-refreshes every 30s as messages flow in.
+            Live view of your purchase orders and what's worth your attention right now.
           </p>
         </>
       )}
+
+      {briefing && <NeedsAttentionPanel briefing={briefing} />}
 
       <div className="alert-grid">
         <Stat
@@ -133,7 +146,7 @@ export default function Dashboard({ embedded = false }: DashboardProps = {}) {
           tone={(s?.pendingDraftsCount ?? 0) > 0 ? "warn" : undefined}
         />
         <Stat
-          label="Active auto-chases"
+          label="Auto-chases"
           value={s?.activeAutoChases ?? 0}
           tone={(s?.activeAutoChases ?? 0) > 0 ? "ok" : undefined}
         />
@@ -420,7 +433,7 @@ function ViewModal({
         )}
         <div style={{ marginTop: 14, textAlign: "right" }}>
           <Link to="/browse" className="btn-secondary btn" onClick={onClose}>
-            Open in Tracking →
+            Open in Track →
           </Link>
         </div>
       </div>
@@ -441,6 +454,104 @@ function Stat({
     <div className={`alert-stat ${tone || ""}`}>
       <div className="num">{value}</div>
       <div className="label">{label}</div>
+    </div>
+  );
+}
+
+const PRIORITY_TONE: Record<AttentionPriority, string> = {
+  critical: "var(--danger)",
+  high: "var(--warn)",
+  medium: "var(--accent)",
+};
+
+const PRIORITY_LABEL: Record<AttentionPriority, string> = {
+  critical: "Critical",
+  high: "High",
+  medium: "Watch",
+};
+
+function NeedsAttentionPanel({ briefing }: { briefing: AttentionBriefing }) {
+  const empty = briefing.items.length === 0;
+  return (
+    <div className={`briefing ${empty ? "briefing--clear" : ""}`}>
+      {/* ── Hero header ───────────────────────────── */}
+      <div className="briefing__hero">
+        <div className="briefing__hero-icon" aria-hidden>
+          ✨
+        </div>
+        <div className="briefing__hero-text">
+          <div className="briefing__eyebrow">AI Briefing</div>
+          <p className="briefing__narrative">{briefing.narrative}</p>
+        </div>
+      </div>
+
+      {!empty && (
+        <>
+          <div className="briefing__divider" />
+          <div className="briefing__list-title">
+            <span>Top items needing attention</span>
+            <span className="briefing__count">{briefing.items.length}</span>
+          </div>
+          <div className="briefing__list">
+            {briefing.items.map((item) => (
+              <AttentionCard key={item.id} item={item} />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function AttentionCard({ item }: { item: AttentionItem }) {
+  const tone = PRIORITY_TONE[item.priority];
+  // Guard against backends serving stale cached items where askQuery is
+  // missing — fall back to a query derived from the headline + refs so the
+  // user never gets dropped into chat with a literal "undefined" message.
+  const askQuery =
+    item.askQuery && item.askQuery.trim()
+      ? item.askQuery
+      : item.refs.length > 0
+      ? `What's the latest on ${item.refs.join(", ")}? ${item.headline}`
+      : `Tell me more about this: ${item.headline}`;
+  const askHref = `/chat?q=${encodeURIComponent(askQuery)}`;
+  return (
+    <div className="attention-card" style={{ borderLeftColor: tone }}>
+      <div className="attention-card__body">
+        <div className="attention-card__top">
+          <span className="attention-card__priority">
+            <span
+              className="attention-card__dot"
+              style={{ background: tone, boxShadow: `0 0 0 3px ${tone}33` }}
+            />
+            <span
+              className="attention-card__priority-label"
+              style={{ color: tone }}
+            >
+              {PRIORITY_LABEL[item.priority]}
+            </span>
+          </span>
+          {item.refs.length > 0 &&
+            item.refs.map((r) => (
+              <span key={r} className="attention-card__ref">{r}</span>
+            ))}
+        </div>
+        <div className="attention-card__headline">{item.headline}</div>
+        <div className="attention-card__desc">{item.description}</div>
+      </div>
+      <div className="attention-card__actions">
+        <Link to={askHref} className="btn-secondary btn attention-card__btn">
+          <span className="attention-card__btn-icon" aria-hidden>💬</span>
+          Ask AI
+        </Link>
+        <Link
+          to={item.actionRoute}
+          className="btn-secondary btn attention-card__btn"
+        >
+          {item.actionLabel}
+          <span className="attention-card__btn-arrow" aria-hidden>→</span>
+        </Link>
+      </div>
     </div>
   );
 }

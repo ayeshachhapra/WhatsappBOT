@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api, CitedMessage, GroupRef } from "../api";
 import MarkdownView from "../components/MarkdownView";
 
@@ -71,6 +72,7 @@ export default function Chat({ embedded = false }: ChatProps = {}) {
   const [status, setStatus] = useState<string | null>(null);
   const [tracked, setTracked] = useState<GroupRef[]>([]);
   const histRef = useRef<HTMLDivElement>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   useEffect(() => {
     api
@@ -78,6 +80,34 @@ export default function Chat({ embedded = false }: ChatProps = {}) {
       .then(({ groups }) => setTracked(groups || []))
       .catch(() => {});
   }, []);
+
+  // When the user lands on /chat?q=... (e.g. via "Ask AI" buttons on the
+  // dashboard's briefing panel), auto-send the question once. We strip the
+  // param immediately after firing so a refresh doesn't re-send it.
+  useEffect(() => {
+    const raw = searchParams.get("q");
+    const q = (raw || "").trim();
+    // Reject empty queries, the literal string "undefined" / "null" (which
+    // happen when a caller URL-encodes a missing field), and queries that are
+    // just punctuation. Always strip the param so a stale value can't re-fire.
+    const isJunk =
+      !q ||
+      q.toLowerCase() === "undefined" ||
+      q.toLowerCase() === "null" ||
+      /^[\s\W]+$/.test(q);
+
+    if (raw !== null) {
+      const next = new URLSearchParams(searchParams);
+      next.delete("q");
+      setSearchParams(next, { replace: true });
+    }
+
+    if (isJunk || streaming) return;
+    send(q);
+    // We only want to react when the param appears — `send` and `streaming`
+    // capture closures change on every render, so excluding them is intended.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams.get("q")]);
 
   useEffect(() => {
     histRef.current?.scrollTo({

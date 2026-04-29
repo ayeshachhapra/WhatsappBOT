@@ -20,6 +20,8 @@ import alertRulesRoutes from "./routes/alertRules";
 import alertTriggersRoutes from "./routes/alertTriggers";
 import purchaseOrdersRoutes from "./routes/purchaseOrders";
 import agentRoutes from "./routes/agent";
+import dashboardRoutes from "./routes/dashboard";
+import outboxRoutes from "./routes/outbox";
 
 const log = createLogger("Server");
 
@@ -59,6 +61,8 @@ export function createApp() {
   app.use("/api/alert-triggers", alertTriggersRoutes);
   app.use("/api/purchase-orders", purchaseOrdersRoutes);
   app.use("/api/agent", agentRoutes);
+  app.use("/api/dashboard", dashboardRoutes);
+  app.use("/api/outbox", outboxRoutes);
 
   // Serve built frontend in production
   const frontendPath = path.join(__dirname, "../../frontend/dist");
