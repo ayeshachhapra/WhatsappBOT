@@ -19,6 +19,7 @@ import sendersRoutes from "./routes/senders";
 import alertRulesRoutes from "./routes/alertRules";
 import alertTriggersRoutes from "./routes/alertTriggers";
 import purchaseOrdersRoutes from "./routes/purchaseOrders";
+import agentRoutes from "./routes/agent";
 
 const log = createLogger("Server");
 
@@ -57,6 +58,7 @@ export function createApp() {
   app.use("/api/alert-rules", alertRulesRoutes);
   app.use("/api/alert-triggers", alertTriggersRoutes);
   app.use("/api/purchase-orders", purchaseOrdersRoutes);
+  app.use("/api/agent", agentRoutes);
 
   // Serve built frontend in production
   const frontendPath = path.join(__dirname, "../../frontend/dist");

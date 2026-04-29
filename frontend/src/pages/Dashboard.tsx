@@ -151,7 +151,7 @@ export default function Dashboard({ embedded = false }: DashboardProps = {}) {
         <ViewCard
           kind="not_reachable"
           title="📵 Not reachable"
-          subtitle="We asked about ETA — no reply yet"
+          subtitle="Delayed and supplier hasn't replied"
           orders={notReachable}
           tone="warn"
           onOpenAll={() => setOpenAll("not_reachable")}
@@ -237,24 +237,23 @@ function categorisePOs(pos: PurchaseOrder[]): {
   notReachable: PurchaseOrder[];
   ontrack: PurchaseOrder[];
 } {
-  const now = Date.now();
   const late: PurchaseOrder[] = [];
   const notReachable: PurchaseOrder[] = [];
   const ontrack: PurchaseOrder[] = [];
 
+  // Simple, signal-driven buckets keyed off the two persisted flags:
+  //   Not reachable ← delayed AND awaiting reply  (problem flagged + no response)
+  //   Late          ← delayed AND not awaiting    (problem flagged, supplier engaged)
+  //   On track      ← not delayed, not delivered  (everything still progressing)
+  // Each PO lands in exactly one bucket so KPI counts remain coherent.
   for (const p of pos) {
     if (p.status === "delivered") continue;
-    const etaMs = p.eta ? new Date(p.eta).getTime() : null;
-    const isLate = p.status === "delayed" || (etaMs !== null && etaMs < now);
 
-    if (isLate) {
-      late.push(p);
-    } else if (p.awaitingReply) {
+    if (p.status === "delayed" && p.awaitingReply) {
       notReachable.push(p);
-    } else if (
-      p.status === "in_transit" ||
-      (etaMs !== null && etaMs >= now && p.status === "ordered")
-    ) {
+    } else if (p.status === "delayed") {
+      late.push(p);
+    } else {
       ontrack.push(p);
     }
   }

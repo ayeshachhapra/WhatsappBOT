@@ -11,6 +11,8 @@ import {
   AlertTriggerDocument,
   GroupRef,
   PurchaseOrderDocument,
+  AgentSettingsDocument,
+  AgentActionDocument,
 } from "./schema";
 
 const log = createLogger("DB");
@@ -69,6 +71,11 @@ export async function connectDb(): Promise<Db> {
   await purchaseOrders.createIndex({ eta: 1 });
   await purchaseOrders.createIndex({ awaitingReply: 1 });
 
+  const agentActions = db.collection<AgentActionDocument>("agentActions");
+  await agentActions.createIndex({ consideredAt: -1 });
+  await agentActions.createIndex({ groupJid: 1, consideredAt: -1 });
+  await agentActions.createIndex({ triggerMsgId: 1 });
+
   log.info("Indexes ensured");
   return db;
 }
@@ -108,6 +115,62 @@ export function getAlertTriggersCollection(): Collection<AlertTriggerDocument> {
 
 export function getPurchaseOrdersCollection(): Collection<PurchaseOrderDocument> {
   return getDb().collection<PurchaseOrderDocument>("purchaseOrders");
+}
+
+export function getAgentSettingsCollection(): Collection<AgentSettingsDocument> {
+  return getDb().collection<AgentSettingsDocument>("agentSettings");
+}
+
+export function getAgentActionsCollection(): Collection<AgentActionDocument> {
+  return getDb().collection<AgentActionDocument>("agentActions");
+}
+
+const DEFAULT_AGENT_SETTINGS: Omit<AgentSettingsDocument, "updatedAt"> = {
+  _id: "default",
+  enabled: false,
+  allowedGroupJids: [],
+  maxMessagesPerGroupPerHour: 4,
+  maxMessagesPerGroupPerDay: 12,
+  cooldownSeconds: 90,
+  mode: "active",
+};
+
+export async function getAgentSettings(): Promise<AgentSettingsDocument> {
+  const collection = getAgentSettingsCollection();
+  const doc = await collection.findOne({ _id: "default" });
+  if (doc) return doc;
+  const seeded: AgentSettingsDocument = {
+    ...DEFAULT_AGENT_SETTINGS,
+    updatedAt: new Date(),
+  };
+  await collection.insertOne(seeded);
+  return seeded;
+}
+
+export async function updateAgentSettings(
+  patch: Partial<Omit<AgentSettingsDocument, "_id" | "updatedAt">>
+): Promise<AgentSettingsDocument> {
+  const collection = getAgentSettingsCollection();
+  const { _id: _defaultId, ...defaultsWithoutId } = DEFAULT_AGENT_SETTINGS;
+  void _defaultId;
+  // Mongo forbids the same path appearing in $set and $setOnInsert. The patch
+  // can name any subset of the default fields (e.g. `enabled`), so strip any
+  // overlap from $setOnInsert before issuing the update.
+  const setOnInsert: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(defaultsWithoutId)) {
+    if (!(key in patch)) setOnInsert[key] = value;
+  }
+  await collection.updateOne(
+    { _id: "default" },
+    {
+      $set: { ...patch, updatedAt: new Date() },
+      ...(Object.keys(setOnInsert).length > 0
+        ? { $setOnInsert: setOnInsert }
+        : {}),
+    },
+    { upsert: true }
+  );
+  return getAgentSettings();
 }
 
 export async function getTrackedGroups(): Promise<GroupRef[]> {

@@ -5,6 +5,7 @@ import Chat from "./pages/Chat";
 import Browse from "./pages/Browse";
 import Outbox from "./pages/Outbox";
 import Settings from "./pages/Settings";
+import Agent from "./pages/Agent";
 
 type Theme = "dark" | "light";
 
@@ -38,6 +39,9 @@ export default function App() {
           <NavLink to="/chat" className={({ isActive }) => (isActive ? "active" : "")}>
             Ask AI
           </NavLink>
+          <NavLink to="/agent" className={({ isActive }) => (isActive ? "active" : "")}>
+            Agent
+          </NavLink>
           <NavLink to="/browse" className={({ isActive }) => (isActive ? "active" : "")}>
             Browse
           </NavLink>
@@ -67,6 +71,7 @@ export default function App() {
             <Route path="/" element={<Navigate to="/home" replace />} />
             <Route path="/home" element={<Home />} />
             <Route path="/chat" element={<Chat />} />
+            <Route path="/agent" element={<Agent />} />
             <Route path="/browse" element={<Browse />} />
             <Route path="/outbox" element={<Outbox />} />
             <Route path="/settings" element={<Settings />} />

@@ -1,9 +1,13 @@
 /**
  * Wipe all message-derived chat data so the system can start fresh.
  *
- * Wipes:        messages, alertTriggers, drafts, sendLog
+ * Wipes:        messages, alertTriggers, drafts, sendLog, agentActions
  * Resets:       purchaseOrders.{lastUpdateMsgId, lastUpdateAt, awaitingReply}
- * Preserves:    purchaseOrders rows, groupFilters, alertRules, scheduledMessages, settings
+ * Preserves:    purchaseOrders rows, groupFilters, alertRules, scheduledMessages,
+ *               agentSettings, settings
+ *
+ * Wiping agentActions also clears the agent's hourly/daily rate-limit counters
+ * (the limiter computes from `sent: true` rows in this collection).
  *
  * Run with:  npx ts-node src/scripts/reset-chat-data.ts
  */
@@ -14,7 +18,7 @@ async function main() {
   await connectDb();
   const db = getDb();
 
-  const wipe = ["messages", "alertTriggers", "drafts", "sendLog"];
+  const wipe = ["messages", "alertTriggers", "drafts", "sendLog", "agentActions"];
   const counts: Record<string, number> = {};
 
   for (const name of wipe) {

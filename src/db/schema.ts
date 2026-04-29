@@ -24,6 +24,13 @@ export interface MessageDocument {
   sentiment: Sentiment | null;
   /** PO numbers, AWBs, invoice IDs, container numbers, tracking IDs etc. mentioned in the message. */
   referenceNumbers: string[];
+  /** "extracted" (default — the body itself named these refs) or "inherited"
+   *  (the body had no refs but they were carried over from a recent agent
+   *  clarifying question in the same group). */
+  referenceSource?: "extracted" | "inherited";
+  /** Set when referenceSource === "inherited" — points to the AgentAction
+   *  whose refs were carried over. Useful for audit / timeline rendering. */
+  inheritedFromAgentActionId?: string;
   /** ETA / promised / scheduled / delivery date if mentioned, else null. ISO string. */
   dueDate: Date | null;
   embedding: number[] | null;
@@ -139,6 +146,63 @@ export interface AlertRuleDocument {
   enabled: boolean;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export type AgentAction =
+  | "none"
+  | "ask_clarifying"
+  | "acknowledge"
+  | "escalate";
+
+/**
+ * Singleton config doc for the autonomous AI agent. Persisted under
+ * `_id: "default"` in `agentSettings`.
+ *
+ * Hard rule: the agent is allowed to send WhatsApp messages ONLY to groups
+ * whose JID appears in `allowedGroupJids`. The pipeline + manager both
+ * re-check this at send time so a leak is impossible even if the LLM
+ * hallucinated a JID.
+ */
+export interface AgentSettingsDocument {
+  _id: string;
+  enabled: boolean;
+  allowedGroupJids: string[];
+  /** Hourly cap on outbound agent messages PER GROUP (safety net against loops). */
+  maxMessagesPerGroupPerHour: number;
+  /** Daily cap on outbound agent messages PER GROUP. */
+  maxMessagesPerGroupPerDay: number;
+  /** Minimum seconds between two agent messages in the same group. */
+  cooldownSeconds: number;
+  /** "observe" = decide but never send; useful for dry-run. */
+  mode: "observe" | "active";
+  updatedAt: Date;
+}
+
+export interface AgentActionDocument {
+  _id?: ObjectId;
+  /** ISO timestamp the agent considered the message. */
+  consideredAt: Date;
+  triggerMsgId: string;
+  groupJid: string;
+  groupName: string;
+  /** Inbound supplier (the one we'd reply to / @-mention). */
+  senderName: string;
+  senderJid: string;
+  inboundBody: string;
+  decision: AgentAction;
+  /** Why the agent chose this action — one or two sentences from the LLM. */
+  reasoning: string;
+  /** Outbound text we sent (if any). */
+  outboundText: string | null;
+  /** True iff the message was actually delivered through the manager. */
+  sent: boolean;
+  /** Reason we skipped sending (failed guardrail, observe-mode, error). */
+  skipReason: string | null;
+  referenceNumbers: string[];
+  /** Mention applied to the outbound, if any. */
+  mentionJid: string | null;
+  mentionName: string | null;
+  error: string | null;
 }
 
 export type PurchaseOrderStatus =

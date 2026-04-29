@@ -168,6 +168,43 @@ export interface DraftDoc {
   sendError: string | null;
 }
 
+export type AgentDecision =
+  | "none"
+  | "ask_clarifying"
+  | "acknowledge"
+  | "escalate";
+
+export interface AgentSettings {
+  _id: string;
+  enabled: boolean;
+  allowedGroupJids: string[];
+  maxMessagesPerGroupPerHour: number;
+  maxMessagesPerGroupPerDay: number;
+  cooldownSeconds: number;
+  mode: "active" | "observe";
+  updatedAt: string;
+}
+
+export interface AgentActionRecord {
+  _id: string;
+  consideredAt: string;
+  triggerMsgId: string;
+  groupJid: string;
+  groupName: string;
+  senderName: string;
+  senderJid: string;
+  inboundBody: string;
+  decision: AgentDecision;
+  reasoning: string;
+  outboundText: string | null;
+  sent: boolean;
+  skipReason: string | null;
+  referenceNumbers: string[];
+  mentionJid: string | null;
+  mentionName: string | null;
+  error: string | null;
+}
+
 export interface CitedMessage {
   groupName: string;
   groupJid: string;
