@@ -9,6 +9,7 @@ import {
   getPurchaseOrdersCollection,
   getAgentSettings,
   getAgentActionsCollection,
+  getSendLogCollection,
 } from "../db/mongo";
 import {
   MessageDocument,
@@ -188,14 +189,15 @@ async function processMessage(msg: IncomingMessage): Promise<PipelineResult> {
   // We inherit refs from the most recent agent ask_clarifying action in the
   // same group, within a short stickiness window.
   let effectiveRefs = extracted.referenceNumbers || [];
-  let inheritedFromMsgId: string | null = null;
+  let inheritedFromAgentActionId: string | null = null;
   if (effectiveRefs.length === 0 && !msg.fromMe) {
-    const inherited = await inheritRefsFromRecentAsk(msg.groupJid);
+    const inherited = await inheritRefsFromRecentContext(msg.groupJid);
     if (inherited && inherited.refs.length > 0) {
       effectiveRefs = inherited.refs;
-      inheritedFromMsgId = inherited.fromAgentActionId;
+      inheritedFromAgentActionId =
+        inherited.source === "agentAction" ? inherited.sourceId : null;
       log.info(
-        `[inherit] msg ${msg.msgId} inherits refs ${inherited.refs.join(",")} from prior agent ask`
+        `[inherit] msg ${msg.msgId} inherits refs ${inherited.refs.join(",")} from prior ${inherited.source}`
       );
     }
   }
@@ -213,10 +215,10 @@ async function processMessage(msg: IncomingMessage): Promise<PipelineResult> {
         dueDate: extracted.dueDate,
         embedding,
         extractedAt: new Date(),
-        ...(inheritedFromMsgId
+        ...(effectiveRefs.length > 0 && (extracted.referenceNumbers || []).length === 0
           ? {
               referenceSource: "inherited" as const,
-              inheritedFromAgentActionId: inheritedFromMsgId,
+              ...(inheritedFromAgentActionId ? { inheritedFromAgentActionId } : {}),
             }
           : {}),
       },
@@ -259,7 +261,8 @@ async function processMessage(msg: IncomingMessage): Promise<PipelineResult> {
     referenceNumbers: effectiveRefs,
     sentiment: extracted.sentiment,
     timestamp: msg.timestamp,
-    refsWereInherited: !!inheritedFromMsgId,
+    refsWereInherited:
+      effectiveRefs.length > 0 && (extracted.referenceNumbers || []).length === 0,
   });
 
   log.info(
@@ -333,6 +336,8 @@ const PO_RESOLVED_RE = /\b(delivered|received|completed|done|pod|signed|closed)\
 const PO_DISPATCHED_RE =
   /\b(dispatch|dispatched|shipped|out for delivery|in transit|picked up|left)\b/i;
 const PO_DELAYED_RE = /\b(delay|delayed|late|hold|stuck|pending)\b/i;
+const PO_FOLLOW_UP_ASK_RE =
+  /\?|(?:^|\b)(please|kindly|can you|could you|would you|what|when|why|how|confirm|share|provide|advise|let us know|update us|send)\b/i;
 
 function inferPoStatusFromBody(
   body: string,
@@ -344,6 +349,10 @@ function inferPoStatusFromBody(
   // Don't downgrade from in_transit → ordered just because the message has no
   // status verb; only update when we can actually infer something.
   return current;
+}
+
+function isFollowUpAsk(body: string): boolean {
+  return PO_FOLLOW_UP_ASK_RE.test(body);
 }
 
 /**
@@ -365,17 +374,10 @@ async function updatePurchaseOrdersFromMessage(input: {
 }): Promise<void> {
   if (!input.referenceNumbers || input.referenceNumbers.length === 0) return;
   try {
-    const collection = getPurchaseOrdersCollection();
-    // Case-insensitive match on poNumber for each ref the message carries.
     const refs = input.referenceNumbers.map((r) => r.trim()).filter(Boolean);
     if (refs.length === 0) return;
-    const matches = await collection
-      .find({
-        $or: refs.map((r) => ({
-          poNumber: { $regex: `^${escapeRegex(r)}$`, $options: "i" },
-        })),
-      })
-      .toArray();
+    const collection = getPurchaseOrdersCollection();
+    const matches = await findPurchaseOrdersByRefs(refs);
     if (matches.length === 0) return;
 
     const newDueDate = input.dueDate ? new Date(input.dueDate) : null;
@@ -388,7 +390,7 @@ async function updatePurchaseOrdersFromMessage(input: {
         updatedAt: now,
         // fromMe = our follow-up went out → still waiting for a reply
         // !fromMe = supplier (or anyone else) sent the message → reply received
-        awaitingReply: !!input.fromMe,
+        awaitingReply: input.fromMe ? isFollowUpAsk(input.body) : false,
       };
       if (newStatus !== po.status) set.status = newStatus;
       if (newDueDate) set.eta = newDueDate;
@@ -599,43 +601,144 @@ async function maybeRunAgent(input: AgentTriggerInput): Promise<void> {
  * question that DID carry refs and was sent recently — returns those refs so
  * the inbound is treated as a continuation of that thread.
  *
- * Stickiness window: 30 minutes. Beyond that we assume the conversation has
+ * Stickiness window: 24 hours. Beyond that we assume the conversation has
  * naturally drifted and inheriting could mis-tag an unrelated reply.
  */
-const REF_INHERIT_WINDOW_MS = 30 * 60 * 1000;
+const REF_INHERIT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-async function inheritRefsFromRecentAsk(
+async function inheritRefsFromRecentContext(
   groupJid: string
-): Promise<{ refs: string[]; fromAgentActionId: string } | null> {
+): Promise<{
+  refs: string[];
+  source: "message" | "sendLog" | "agentAction";
+  sourceId: string;
+} | null> {
   const since = new Date(Date.now() - REF_INHERIT_WINDOW_MS);
-  const last = await getAgentActionsCollection().findOne(
-    {
-      groupJid,
-      decision: "ask_clarifying",
-      sent: true,
-      consideredAt: { $gte: since },
-      "referenceNumbers.0": { $exists: true },
-    },
-    { sort: { consideredAt: -1 } }
-  );
-  if (!last) return null;
-  return {
-    refs: last.referenceNumbers || [],
-    fromAgentActionId: last._id ? last._id.toString() : "",
-  };
+  const [lastOutboundMessage, lastSendLog, lastAgentAsk] = await Promise.all([
+    getMessagesCollection().findOne(
+      {
+        groupJid,
+        fromMe: true,
+        timestamp: { $gte: since },
+        "referenceNumbers.0": { $exists: true },
+      },
+      { sort: { timestamp: -1 }, projection: { referenceNumbers: 1, msgId: 1, timestamp: 1 } }
+    ),
+    getSendLogCollection().findOne(
+      {
+        "targetGroup.jid": groupJid,
+        status: "success",
+        sentAt: { $gte: since },
+      },
+      { sort: { sentAt: -1 }, projection: { messageText: 1, sentAt: 1 } }
+    ),
+    getAgentActionsCollection().findOne(
+      {
+        groupJid,
+        decision: "ask_clarifying",
+        sent: true,
+        consideredAt: { $gte: since },
+        "referenceNumbers.0": { $exists: true },
+      },
+      { sort: { consideredAt: -1 }, projection: { referenceNumbers: 1, consideredAt: 1 } }
+    ),
+  ]);
+
+  const candidates: Array<{
+    at: Date;
+    refs: string[];
+    source: "message" | "sendLog" | "agentAction";
+    sourceId: string;
+  }> = [];
+
+  if (lastOutboundMessage?.referenceNumbers?.length) {
+    candidates.push({
+      at: new Date(lastOutboundMessage.timestamp || 0),
+      refs: lastOutboundMessage.referenceNumbers,
+      source: "message",
+      sourceId: lastOutboundMessage.msgId,
+    });
+  }
+
+  if (lastSendLog?.messageText) {
+    const refs = await refsMentionedInText(lastSendLog.messageText);
+    if (refs.length > 0) {
+      candidates.push({
+        at: new Date(lastSendLog.sentAt || 0),
+        refs,
+        source: "sendLog",
+        sourceId: lastSendLog._id ? lastSendLog._id.toString() : "",
+      });
+    }
+  }
+
+  if (lastAgentAsk?.referenceNumbers?.length) {
+    candidates.push({
+      at: new Date(lastAgentAsk.consideredAt || 0),
+      refs: lastAgentAsk.referenceNumbers,
+      source: "agentAction",
+      sourceId: lastAgentAsk._id ? lastAgentAsk._id.toString() : "",
+    });
+  }
+
+  candidates.sort((a, b) => b.at.getTime() - a.at.getTime());
+  return candidates[0] || null;
 }
 
 async function loadPoContext(refs: string[]) {
   if (refs.length === 0) return [];
+  return findPurchaseOrdersByRefs(refs);
+}
+
+async function findPurchaseOrdersByRefs(refs: string[]) {
+  const cleanRefs = refs.map((r) => r.trim()).filter(Boolean);
+  if (cleanRefs.length === 0) return [];
+
   const collection = getPurchaseOrdersCollection();
-  const docs = await collection
+  const exactMatches = await collection
     .find({
-      $or: refs.map((r) => ({
+      $or: cleanRefs.map((r) => ({
         poNumber: { $regex: `^${escapeRegex(r)}$`, $options: "i" },
       })),
     })
     .toArray();
-  return docs;
+
+  const seen = new Set(exactMatches.map((p) => p._id?.toString()));
+  const fuzzyMatches = (await collection.find({}).toArray()).filter((po) => {
+    const id = po._id?.toString();
+    if (id && seen.has(id)) return false;
+    return cleanRefs.some((ref) => refsMatchPo(ref, po.poNumber));
+  });
+
+  return [...exactMatches, ...fuzzyMatches];
+}
+
+async function refsMentionedInText(text: string): Promise<string[]> {
+  const purchaseOrders = await getPurchaseOrdersCollection()
+    .find({}, { projection: { poNumber: 1 } })
+    .toArray();
+  return purchaseOrders
+    .filter((po) => refsMatchPo(text, po.poNumber))
+    .map((po) => po.poNumber);
+}
+
+function refsMatchPo(refOrText: string, poNumber: string): boolean {
+  const refNorm = normalizeRef(refOrText);
+  const poNorm = normalizeRef(poNumber);
+  if (!refNorm || !poNorm) return false;
+  if (refNorm === poNorm || refNorm.includes(poNorm)) return true;
+
+  const refDigits = digitsOnly(refOrText);
+  const poDigits = digitsOnly(poNumber);
+  return refDigits.length >= 4 && poDigits.length >= 4 && refDigits.includes(poDigits);
+}
+
+function normalizeRef(value: string): string {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function digitsOnly(value: string): string {
+  return value.replace(/\D/g, "");
 }
 
 /**

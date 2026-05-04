@@ -92,20 +92,27 @@ router.get("/:id", async (req, res) => {
     if (!ObjectId.isValid(id)) return res.status(400).json({ error: "invalid id" });
     const po = await getPurchaseOrdersCollection().findOne({ _id: new ObjectId(id) });
     if (!po) return res.status(404).json({ error: "Not found" });
-    // Pull the message timeline that mentions this PO
-    const messages = await getMessagesCollection()
+    // Pull the message timeline that mentions this PO. References often arrive
+    // as "1008" or "PO 1008" while the master row is "PO-1008".
+    const candidates = await getMessagesCollection()
       .find(
         {
-          referenceNumbers: {
-            $regex: `^${escapeRegex(po.poNumber)}$`,
-            $options: "i",
-          },
+          $or: [
+            { "referenceNumbers.0": { $exists: true } },
+            ...(po.lastUpdateMsgId ? [{ msgId: po.lastUpdateMsgId }] : []),
+          ],
         },
         { projection: { embedding: 0 } }
       )
       .sort({ timestamp: 1 })
-      .limit(200)
       .toArray();
+    const messages = candidates
+      .filter(
+        (m) =>
+          m.msgId === po.lastUpdateMsgId ||
+          (m.referenceNumbers || []).some((ref) => refsMatchPo(ref, po.poNumber))
+      )
+      .slice(-200);
     res.json({ purchaseOrder: po, messages });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -161,6 +168,17 @@ router.delete("/:id", async (req, res) => {
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function refsMatchPo(refOrText: string, poNumber: string): boolean {
+  const refNorm = refOrText.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const poNorm = poNumber.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!refNorm || !poNorm) return false;
+  if (refNorm === poNorm || refNorm.includes(poNorm)) return true;
+
+  const refDigits = refOrText.replace(/\D/g, "");
+  const poDigits = poNumber.replace(/\D/g, "");
+  return refDigits.length >= 4 && poDigits.length >= 4 && refDigits.includes(poDigits);
 }
 
 export default router;

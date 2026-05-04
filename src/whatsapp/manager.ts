@@ -480,7 +480,7 @@ export class WhatsAppManager extends EventEmitter {
 
       this.messageCount++;
       log.info(
-        `[accept] msg #${this.messageCount} from "${senderName}" in "${chatName}": "${body.substring(0, 120)}"`
+        `[accept] msg #${this.messageCount} from "${senderName}" in "${chatName}": "${(body || "").substring(0, 120)}"`
       );
       this.emit("message", incoming);
 

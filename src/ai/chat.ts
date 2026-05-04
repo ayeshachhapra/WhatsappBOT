@@ -1,8 +1,8 @@
 import { config } from "../config";
 import { getGeminiClient, getResponseText, buildGenerationConfig } from "./gemini";
 import { generateEmbedding } from "./embed";
-import { getMessagesCollection } from "../db/mongo";
-import { MessageDocument } from "../db/schema";
+import { getMessagesCollection, getPurchaseOrdersCollection } from "../db/mongo";
+import { MessageDocument, PurchaseOrderDocument } from "../db/schema";
 import { whatsapp } from "../whatsapp/manager";
 import createLogger from "../utils/logger";
 
@@ -45,6 +45,7 @@ const SYSTEM_PROMPT = `You are an assistant for SUPPLY-CHAIN BUYERS. The user is
 You receive:
 - The user's question (and recent chat history for context).
 - A set of message excerpts retrieved from the database, each with: index, group, sender, timestamp, topic, body.
+- A Current Track table snapshot with purchase-order rows, when relevant. This table is the latest master state and can be newer than the WhatsApp excerpts.
 
 # HOW TO REFER TO THE USER
 Always address the user as "you" / "your". NEVER use any name for the user, even if a name appears in their messages or push-name. Self-sent messages are tagged \`[SELF-SENT]\` with sender "⬅️ THE USER (sent by you)" — refer to those as "you said …" / "your message …", never by name.
@@ -58,8 +59,19 @@ The retrieved messages are listed oldest → newest. The message tagged \`★ LA
 3. If the latest message says something is delayed / pushed / postponed WITHOUT giving a new date, call that out as a missing piece — and recommend asking for the revised ETA.
 4. Tight bullets only if there are 2+ distinct facts worth surfacing (ETA, dispatch, AWB, last contact). No message-by-message recap.
 5. Cite as "<group>, <date>" inline only when stating a specific fact. Don't list every source.
-6. Answer ONLY from retrieved messages. If they don't have enough info, say so in one line.
+6. Answer ONLY from retrieved messages and the Current Track table. If they don't have enough info, say so in one line.
 7. NEVER invent facts.
+
+# ANSWER FORMAT OVERRIDE - CURRENT STATE FIRST
+For every answer about an order, PO, shipment, ETA, delivery, supplier update, delay, dispatch, or "what is happening", follow this structure even if another section sounds different:
+1. Start with **Current state:** and say the current status/ETA/state first, using the Track table when available. Include the reason in the same line when known. Example: "Current state: PO-1008 is delayed, with ETA May 2; reason given was a logistics issue."
+2. Add **Reason:** if the reason did not fit cleanly in the first line, or if the user asks why. If no reason is known, say "Reason: not provided in the available data."
+3. Add **What changed:** only when earlier context shows a prior status, ETA, or reason. Summarize the transition in chronological order: "It was X before, then changed to Y because Z." Use 1-3 bullets.
+4. If there is no meaningful change history, add **Summary:** with one compact sentence.
+5. Do not infer a reason. Use only explicit reasons from WhatsApp messages or the Track table.
+
+# CURRENT TRACK TABLE
+When Track table rows are provided, use their \`status\`, \`eta\`, \`awaitingReply\`, and \`lastUpdateAt\` as the current table state. If WhatsApp messages and the Track table differ, say that the Track table currently shows the table value, then mention the message evidence if useful. For questions about "current status", "ETA", "track", "table", or PO lists, prefer the Track table as the leading source.
 
 # SELF-SENT MESSAGES
 \`[SELF-SENT]\` messages were sent by you (the user) from your own WhatsApp. When relevant:
@@ -79,7 +91,7 @@ DO NOT recommend a follow-up when:
 When recommending, the suggested message should reference the SPECIFIC gap — e.g., "earlier ETA was Apr 25, latest message says delayed with no new date — can you share the revised ETA and reason?".
 
 # NO DATA AVAILABLE
-If the retrieved messages contain NOTHING relevant to the user's question (zero messages, or the messages are about unrelated topics):
+If the retrieved messages AND Current Track table contain NOTHING relevant to the user's question (zero messages/PO rows, or the data is about unrelated topics):
 1. Say exactly this in your answer body, on its own line: "No data found on this. Do you want to send a message to follow up on any of the groups?"
 2. Do NOT pad with apologies or speculation.
 3. ALWAYS append the \`[FOLLOW_UP_SUGGESTION]\` block in this case, with the group field set to the literal string \`any\` (the frontend will let the user pick the group), the sender field blank, and a polite professional message rephrasing the user's question as something they'd ask a supplier / freight forwarder. Keep it short.
@@ -311,6 +323,97 @@ function formatMessages(msgs: MessageDocument[]): string {
     .join("\n\n");
 }
 
+async function searchPurchaseOrdersForChat(
+  query: string,
+  messages: MessageDocument[],
+  limit = 20
+): Promise<PurchaseOrderDocument[]> {
+  const collection = getPurchaseOrdersCollection();
+  const refs = new Set<string>();
+  for (const m of messages) {
+    for (const ref of m.referenceNumbers || []) {
+      if (ref && ref.trim()) refs.add(ref.trim());
+    }
+  }
+
+  const all = await collection.find({}).sort({ eta: 1, poNumber: 1 }).toArray();
+  const queryNorm = normalizeSearchText(query);
+  const hasBroadPoAsk =
+    /\b(po|purchase order|order|track|table|eta|status|delayed|pending|in transit|delivered|awaiting)\b/i.test(
+      query
+    );
+
+  const scored = all
+    .map((po) => {
+      const haystack = normalizeSearchText(
+        [
+          po.poNumber,
+          po.productName,
+          po.companyName,
+          po.status,
+          po.notes || "",
+          po.eta ? po.eta.toISOString().slice(0, 10) : "",
+        ].join(" ")
+      );
+      let score = 0;
+      if (queryNorm && haystack.includes(queryNorm)) score += 20;
+      if (refs.size > 0 && [...refs].some((ref) => refsMatchPo(ref, po.poNumber))) {
+        score += 50;
+      }
+      if (refsMatchPo(query, po.poNumber)) score += 50;
+      if (hasBroadPoAsk) score += 1;
+      return { po, score };
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || etaMs(a.po) - etaMs(b.po));
+
+  return scored.slice(0, limit).map((item) => item.po);
+}
+
+function formatPurchaseOrders(pos: PurchaseOrderDocument[]): string {
+  if (pos.length === 0) return "No relevant Track table rows found.";
+  return pos
+    .map((po, i) => {
+      const eta = po.eta ? new Date(po.eta).toISOString().slice(0, 10) : "not set";
+      const lastUpdate = po.lastUpdateAt
+        ? new Date(po.lastUpdateAt).toISOString().replace("T", " ").substring(0, 16)
+        : "not set";
+      return [
+        `[PO ${i + 1}] ${po.poNumber}`,
+        `    Product: ${po.productName}`,
+        `    Company: ${po.companyName}`,
+        `    Current status: ${po.status}`,
+        `    Current ETA: ${eta}`,
+        `    Awaiting reply: ${po.awaitingReply ? "yes" : "no"}`,
+        `    Last table update: ${lastUpdate}`,
+        po.notes ? `    Notes: ${po.notes}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n");
+    })
+    .join("\n\n");
+}
+
+function normalizeSearchText(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function refsMatchPo(refOrText: string, poNumber: string): boolean {
+  const refNorm = refOrText.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const poNorm = poNumber.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!refNorm || !poNorm) return false;
+  if (refNorm === poNorm || refNorm.includes(poNorm)) return true;
+
+  const refDigits = refOrText.replace(/\D/g, "");
+  const poDigits = poNumber.replace(/\D/g, "");
+  return refDigits.length >= 4 && poDigits.length >= 4 && refDigits.includes(poDigits);
+}
+
+function etaMs(po: PurchaseOrderDocument): number {
+  if (!po.eta) return Number.MAX_SAFE_INTEGER;
+  return new Date(po.eta).getTime();
+}
+
 function toCitations(msgs: MessageDocument[]): CitedMessage[] {
   return msgs.slice(0, 12).map((m) => ({
     groupName: m.groupName,
@@ -346,6 +449,8 @@ export async function chat(
 
   messages = patchSelfSent(messages);
   const messagesText = formatMessages(messages);
+  const purchaseOrders = await searchPurchaseOrdersForChat(normalizedQuery, messages);
+  const purchaseOrdersText = formatPurchaseOrders(purchaseOrders);
 
   const client = getGeminiClient();
   const model = client.getGenerativeModel({
@@ -363,7 +468,11 @@ Retrieved messages:
 
 ${messagesText}
 
-Answer the user's question using only these messages.`;
+Current Track table rows:
+
+${purchaseOrdersText}
+
+Answer the user's question using only these messages and Track table rows.`;
 
   const geminiHistory = trimmedHistory.map((msg) => ({
     role: msg.role === "assistant" ? ("model" as const) : ("user" as const),
@@ -420,14 +529,16 @@ export async function chatStream(
   }
 
   messages = patchSelfSent(messages);
+  const purchaseOrders = await searchPurchaseOrdersForChat(normalizedQuery, messages);
 
   onEvent({
     type: "status",
-    data: `Found ${messages.length} relevant message(s). Generating answer...`,
+    data: `Found ${messages.length} relevant message(s) and ${purchaseOrders.length} Track row(s). Generating answer...`,
   });
   onEvent({ type: "citations", citations: toCitations(messages) });
 
   const messagesText = formatMessages(messages);
+  const purchaseOrdersText = formatPurchaseOrders(purchaseOrders);
 
   const client = getGeminiClient();
   const model = client.getGenerativeModel({
@@ -445,7 +556,11 @@ Retrieved messages:
 
 ${messagesText}
 
-Answer the user's question using only these messages.`;
+Current Track table rows:
+
+${purchaseOrdersText}
+
+Answer the user's question using only these messages and Track table rows.`;
 
   const geminiHistory = trimmedHistory.map((msg) => ({
     role: msg.role === "assistant" ? ("model" as const) : ("user" as const),

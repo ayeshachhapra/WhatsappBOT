@@ -4,7 +4,9 @@
       "Read(//d/Broker/**)",
       "Bash(npx tsc *)",
       "Bash(git stash *)",
-      "Bash(npx ts-node *)"
+      "Bash(npx ts-node *)",
+      "WebSearch",
+      "WebFetch(domain:www.twilio.com)"
     ]
   }
 }
