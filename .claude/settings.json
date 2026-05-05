@@ -6,7 +6,24 @@
       "Bash(git stash *)",
       "Bash(npx ts-node *)",
       "WebSearch",
-      "WebFetch(domain:www.twilio.com)"
+      "WebFetch(domain:www.twilio.com)",
+      "Bash(where ngrok *)",
+      "Bash(ngrok version *)",
+      "Bash(netstat -ano)",
+      "Bash(npm run *)",
+      "Bash(curl -s -o NUL -w \"%{http_code}\" http://localhost:5000/health)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5000/health)",
+      "Bash(curl -s http://localhost:5000/health)",
+      "Bash(ngrok config *)",
+      "Bash(ngrok http *)",
+      "Bash(curl -s http://localhost:4040/api/tunnels)",
+      "Bash(ngrok update *)",
+      "Bash(curl -s -H \"ngrok-skip-browser-warning: 1\" https://579a-202-134-169-227.ngrok-free.app/health)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" -X POST -H \"ngrok-skip-browser-warning: 1\" -H \"Content-Type: application/json\" -u \"postmark:anything-you-pick-here\" -d \"{\\\\\"MessageID\\\\\":\\\\\"<smoke-tunnel-test@example.com>\\\\\",\\\\\"From\\\\\":\\\\\"a@b.c\\\\\",\\\\\"FromFull\\\\\":{\\\\\"Email\\\\\":\\\\\"a@b.c\\\\\"},\\\\\"ToFull\\\\\":[],\\\\\"CcFull\\\\\":[],\\\\\"Subject\\\\\":\\\\\"tunnel test\\\\\",\\\\\"TextBody\\\\\":\\\\\"x\\\\\"}\" https://579a-202-134-169-227.ngrok-free.app/api/webhooks/inbound-email)",
+      "Bash(curl -s \"http://localhost:5000/api/inbound-replies\")",
+      "Bash(curl -s \"http://localhost:4040/api/requests/http?limit=20\")",
+      "Bash(python -m json.tool)",
+      "Bash(curl -s \"http://localhost:5000/api/inbound-replies?matched=false\")"
     ]
   }
 }

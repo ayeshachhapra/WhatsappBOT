@@ -235,6 +235,10 @@ export interface PurchaseOrderDocument {
   lastUpdateAt: Date | null;
   /** Optional free-form notes (manual entry only). */
   notes: string | null;
+  /** Supplier contact email used by the email-follow-up flow. Optional. */
+  supplierEmail?: string;
+  /** Supplier contact display name used in email To header rendering. Optional. */
+  supplierName?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -254,4 +258,79 @@ export interface AlertTriggerDocument {
   triggeredAt: Date;
   acknowledged: boolean;
   acknowledgedAt: Date | null;
+}
+
+export type EmailFollowUpStatus = "draft" | "sent" | "replied" | "closed";
+
+/**
+ * Outbound email follow-up tied to a single PurchaseOrderDocument. The user
+ * composes this in the UI, hits "Send Follow-Up", and we open Gmail compose in
+ * a new tab pre-filled with To/Cc/Subject/Body. Status flips:
+ *  - "draft"  immediately after creation (we cannot verify the user actually sent)
+ *  - "sent"   after the frontend's optimistic mark-sent ping
+ *  - "replied" when an inbound webhook payload matches this row
+ *  - "closed" reserved for a manual close action (not in POC)
+ */
+export interface EmailFollowUpDocument {
+  _id?: ObjectId;
+  purchaseOrderId: ObjectId;
+  toEmail: string;
+  toName: string | null;
+  /** Always includes config.emailFollowUps.inboundCcEmail so replies route to us. */
+  ccEmails: string[];
+  /** Includes the [FU-<trackingTag>] suffix used for subject-tag matching. */
+  subject: string;
+  body: string;
+  status: EmailFollowUpStatus;
+  /** Short opaque tag (8 hex chars) embedded as [FU-<tag>] in the subject. */
+  trackingTag: string;
+  /** Reserved for a future programmatic-send path (Postmark outbound, Resend, etc.). */
+  outboundMessageId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  sentAt: Date | null;
+  lastReplyAt: Date | null;
+}
+
+export type ReplyMatchMethod =
+  | "plus_address"
+  | "in_reply_to"
+  | "subject_tag"
+  | "from_address_heuristic"
+  | "unmatched"
+  | "manual";
+
+/**
+ * A parsed inbound supplier reply, persisted whether or not we matched it to a
+ * follow-up. Unmatched rows have followUpId=null + isMatched=false and are
+ * triaged from the admin /admin/inbound-replies page.
+ */
+export interface SupplierReplyDocument {
+  _id?: ObjectId;
+  followUpId: ObjectId | null;
+  isMatched: boolean;
+  matchMethod: ReplyMatchMethod;
+  fromEmail: string;
+  fromName: string | null;
+  toEmails: string[];
+  ccEmails: string[];
+  subject: string;
+  textBody: string;
+  htmlBody: string | null;
+  /** Postmark's StrippedTextReply when present, else falls back to textBody. */
+  strippedReply: string;
+  /** Postmark MessageID — globally unique per inbound message. */
+  messageId: string;
+  inReplyTo: string | null;
+  references: string | null;
+  receivedAt: Date;
+  /** Full Postmark inbound JSON, kept for debugging and re-matching. */
+  rawPayload: Record<string, unknown>;
+  createdAt: Date;
+}
+
+/** Idempotency lock for the inbound webhook. Keyed by Postmark MessageID. */
+export interface ProcessedInboundMessageDocument {
+  _id: string;
+  processedAt: Date;
 }

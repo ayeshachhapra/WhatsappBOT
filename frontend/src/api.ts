@@ -73,8 +73,71 @@ export interface PurchaseOrder {
   lastUpdateMsgId: string | null;
   lastUpdateAt: string | null;
   notes: string | null;
+  supplierEmail?: string;
+  supplierName?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export type EmailFollowUpStatus = "draft" | "sent" | "replied" | "closed";
+
+export type ReplyMatchMethod =
+  | "plus_address"
+  | "in_reply_to"
+  | "subject_tag"
+  | "from_address_heuristic"
+  | "unmatched"
+  | "manual";
+
+export interface SupplierReply {
+  _id: string;
+  followUpId: string | null;
+  isMatched: boolean;
+  matchMethod: ReplyMatchMethod;
+  fromEmail: string;
+  fromName: string | null;
+  toEmails: string[];
+  ccEmails: string[];
+  subject: string;
+  textBody: string;
+  htmlBody: string | null;
+  strippedReply: string;
+  messageId: string;
+  inReplyTo: string | null;
+  references: string | null;
+  receivedAt: string;
+  createdAt: string;
+}
+
+export interface EmailFollowUp {
+  _id: string;
+  purchaseOrderId: string;
+  toEmail: string;
+  toName: string | null;
+  ccEmails: string[];
+  subject: string;
+  body: string;
+  status: EmailFollowUpStatus;
+  trackingTag: string;
+  outboundMessageId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  sentAt: string | null;
+  lastReplyAt: string | null;
+  replies: SupplierReply[];
+}
+
+export interface EmailFollowUpCreateResponse {
+  id: string;
+  trackingTag: string;
+  subject: string;
+  ccEmails: string[];
+  gmailComposeUrl: string;
+  mailtoUrl: string;
+}
+
+export interface InboundReplyEnriched extends SupplierReply {
+  followUp: EmailFollowUp | null;
 }
 
 export interface OrderSummary {

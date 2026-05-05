@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { api, MessageDoc, PurchaseOrder, PurchaseOrderStatus } from "../api";
 
 const STATUS_COLOR: Record<PurchaseOrderStatus, string> = {
@@ -214,13 +215,27 @@ export default function Browse() {
                       </span>
                     </td>
                     <td style={{ textAlign: "right" }}>
-                      <button
-                        className="btn-secondary btn"
-                        onClick={() => openDetail(p)}
-                        style={{ padding: "4px 10px", fontSize: 12 }}
-                      >
-                        Open
-                      </button>
+                      <div style={{ display: "inline-flex", gap: 6 }}>
+                        <Link
+                          to={`/po/${p._id}`}
+                          className="btn-secondary btn"
+                          style={{
+                            padding: "4px 10px",
+                            fontSize: 12,
+                            textDecoration: "none",
+                          }}
+                          title="Email follow-up + reply history"
+                        >
+                          Email
+                        </Link>
+                        <button
+                          className="btn-secondary btn"
+                          onClick={() => openDetail(p)}
+                          style={{ padding: "4px 10px", fontSize: 12 }}
+                        >
+                          Open
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );

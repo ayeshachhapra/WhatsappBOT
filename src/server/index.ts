@@ -22,6 +22,9 @@ import purchaseOrdersRoutes from "./routes/purchaseOrders";
 import agentRoutes from "./routes/agent";
 import dashboardRoutes from "./routes/dashboard";
 import outboxRoutes from "./routes/outbox";
+import emailFollowUpsRoutes from "./routes/emailFollowUps";
+import inboundEmailRoutes from "./routes/inboundEmail";
+import inboundRepliesRoutes from "./routes/inboundReplies";
 
 const log = createLogger("Server");
 
@@ -63,6 +66,9 @@ export function createApp() {
   app.use("/api/agent", agentRoutes);
   app.use("/api/dashboard", dashboardRoutes);
   app.use("/api/outbox", outboxRoutes);
+  app.use("/api/email-follow-ups", emailFollowUpsRoutes);
+  app.use("/api/inbound-replies", inboundRepliesRoutes);
+  app.use("/api/webhooks/inbound-email", inboundEmailRoutes);
 
   // Serve built frontend in production
   const frontendPath = path.join(__dirname, "../../frontend/dist");

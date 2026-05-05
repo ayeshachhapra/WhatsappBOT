@@ -7,6 +7,8 @@ import Outbox from "./pages/Outbox";
 import Schedules from "./pages/Schedules";
 import Settings from "./pages/Settings";
 import Agent from "./pages/Agent";
+import PurchaseOrderDetail from "./pages/PurchaseOrderDetail";
+import InboundReplies from "./pages/InboundReplies";
 
 type Theme = "dark" | "light";
 
@@ -77,6 +79,8 @@ export default function App() {
             <Route path="/outbox" element={<Outbox />} />
             <Route path="/schedules" element={<SchedulesPage />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/po/:id" element={<PurchaseOrderDetail />} />
+            <Route path="/admin/inbound-replies" element={<InboundReplies />} />
 
             {/* Old routes redirect into the new structure */}
             <Route path="/dashboard" element={<Navigate to="/home" replace />} />

@@ -151,6 +151,82 @@ See `.env.example`. Notable:
 | POST   | `/api/drafts/:id/reject`            | Mark rejected                             |
 | GET    | `/api/send-log`                     | Recent sends                              |
 
+## Email follow-ups (POC)
+
+Parallel to the WhatsApp scheduled-follow-ups flow, you can send a one-off
+**email** follow-up to a supplier from the PO detail page and capture their
+reply via Postmark Inbound. The user composes the email in our UI, hits "Send
+Follow-Up", and we open Gmail compose in a new tab pre-filled with To / Cc /
+Subject (with a `[FU-<tag>]` tracking tag) / Body. The user reviews and sends
+manually. When the supplier replies (Reply All, so the Cc'd `ayesha@moviant.ai`
+gets a copy), Postmark POSTs the parsed reply to our webhook, we match it to
+the originating follow-up, and the PO page shows the reply inline.
+
+```
+[PO detail page]                 Gmail (new tab, user-driven)
+     │                                   │
+     │  POST /api/email-follow-ups       │
+     ├──────────────────────────────────▶│
+     │  ◀── { id, gmailComposeUrl }      │
+     │                                   ▼
+     │                            User clicks Send
+     │                                   │
+     │                                   ▼
+     │                          supplier@example.com    ── Reply All ──▶
+     │                                                  ayesha@moviant.ai
+     │                                                        │
+     │                                                        ▼
+     │                                                Postmark Inbound
+     │                                                        │
+     │  POST /api/webhooks/inbound-email (basic auth)         │
+     │ ◀──────────────────────────────────────────────────────┘
+     │  matches via subject tag → updates follow-up to "replied"
+```
+
+### API
+
+| Method | Path                                          | Purpose                                                       |
+| ------ | --------------------------------------------- | ------------------------------------------------------------- |
+| POST   | `/api/email-follow-ups`                       | Create draft + return Gmail compose URL + mailto fallback URL |
+| POST   | `/api/email-follow-ups/:id/mark-sent`         | Optimistic: flip status to `sent` after the user opens Gmail  |
+| POST   | `/api/email-follow-ups/:id/link-reply`        | Manually link an unmatched reply (admin)                      |
+| GET    | `/api/email-follow-ups?purchaseOrderId=...`   | List a PO's follow-ups + their replies                        |
+| GET    | `/api/inbound-replies?matched=true\|false`    | List recent replies for the admin page                        |
+| POST   | `/api/webhooks/inbound-email`                 | Postmark Inbound webhook target (HTTP Basic Auth)             |
+
+### Reply matching (in order, first hit wins)
+
+1. **Plus-addressed To/Cc** (`dev+followup-<tag>@moviant.ai`) — only useful once we move to programmatic send; parser is live now.
+2. **`In-Reply-To` / `References` headers** — only useful with programmatic send.
+3. **Subject tag `[FU-<tag>]`** — primary path for the POC.
+4. **From-address heuristic** — if exactly one follow-up was sent to this address in the last 30 days, match it.
+5. Otherwise the reply is persisted with `followUpId=null`, `isMatched=false`, `matchMethod="unmatched"` — never dropped. Triage from `/admin/inbound-replies`.
+
+### Postmark setup
+
+1. Sign up at [postmarkapp.com](https://postmarkapp.com) (free tier supports inbound).
+2. In your Postmark server, create an **Inbound stream**. Postmark assigns you an inbound address like `xxxx@inbound.postmarkapp.com`.
+3. Configure the **Inbound webhook URL** under that stream:
+   - Production: `https://USER:PASSWORD@your-host/api/webhooks/inbound-email`
+   - Local (via ngrok): `https://USER:PASSWORD@<ngrok-id>.ngrok-free.app/api/webhooks/inbound-email`
+   - `USER` and `PASSWORD` must equal `INBOUND_WEBHOOK_USER` / `INBOUND_WEBHOOK_PASSWORD` in your `.env`.
+4. Configure `ayesha@moviant.ai` to **forward** to the Postmark inbound address (via your mail provider's forwarding rules — Gmail / Google Workspace settings → Forwarding). Long term you can replace this with an MX record pointing your domain at Postmark.
+5. Set `INBOUND_CC_EMAIL=ayesha@moviant.ai` in `.env` so every outbound follow-up Cc's that address.
+
+### Local testing
+
+1. Run the server: `npm run dev` (and `npm run dev:frontend` separately).
+2. Open the frontend → Track → click **Email** on a PO row → set a supplier email → **Send Follow-Up**. Gmail opens in a new tab pre-filled. (You can close it without sending — the POC just verifies the URL contract.)
+3. **Smoke the full pipe without leaving localhost:** `npm run smoke:email-followup`. This creates a temp PO, posts a fake Postmark payload to your webhook with the right basic-auth, and asserts the matching + idempotency + 401 paths.
+4. **End-to-end against real Postmark:** install [ngrok](https://ngrok.com), run `ngrok http 5000`, paste the HTTPS URL into your Postmark inbound webhook config (with `USER:PASSWORD@`), then send a real email to your forwarding address. Watch the server logs for `InboundEmail` lines.
+5. **Inspect raw payloads:** unmatched replies are listed at `/admin/inbound-replies` with their full body. The full Postmark payload is stored in `supplierReplies.rawPayload` for debugging.
+
+### Known POC limitations
+
+- We cannot verify the user actually hit Send in Gmail — `mark-sent` is optimistic.
+- Plain "Reply" (not "Reply All") will bypass capture because mailto/Gmail compose URLs cannot set a `Reply-To` header. The subject tag still gives us a fallback if the supplier later forwards.
+- No outbound email sending — the next iteration would swap in Postmark Outbound (or Resend), at which point the `outboundMessageId` field starts getting populated and the `In-Reply-To` matcher activates.
+
 ## Deploy (Cloud Run via Cloud Build)
 
 ```bash

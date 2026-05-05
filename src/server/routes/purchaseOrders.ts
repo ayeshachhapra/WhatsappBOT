@@ -123,8 +123,10 @@ router.patch("/:id", async (req, res) => {
   try {
     const { id } = req.params;
     if (!ObjectId.isValid(id)) return res.status(400).json({ error: "invalid id" });
-    const { productName, companyName, eta, status, notes } = req.body;
+    const { productName, companyName, eta, status, notes, supplierEmail, supplierName } =
+      req.body;
     const set: Record<string, unknown> = { updatedAt: new Date() };
+    const unset: Record<string, unknown> = {};
     if (typeof productName === "string") set.productName = productName.trim();
     if (typeof companyName === "string") set.companyName = companyName.trim();
     if (eta === null) set.eta = null;
@@ -140,9 +142,31 @@ router.patch("/:id", async (req, res) => {
       set.status = status;
     }
     if (typeof notes === "string" || notes === null) set.notes = notes;
+    if (typeof supplierEmail === "string") {
+      const trimmed = supplierEmail.trim();
+      if (!trimmed) {
+        unset.supplierEmail = "";
+      } else {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+          return res.status(400).json({ error: "supplierEmail is not a valid email" });
+        }
+        set.supplierEmail = trimmed;
+      }
+    } else if (supplierEmail === null) {
+      unset.supplierEmail = "";
+    }
+    if (typeof supplierName === "string") {
+      const trimmed = supplierName.trim();
+      if (!trimmed) unset.supplierName = "";
+      else set.supplierName = trimmed;
+    } else if (supplierName === null) {
+      unset.supplierName = "";
+    }
+    const update: Record<string, unknown> = { $set: set };
+    if (Object.keys(unset).length > 0) update.$unset = unset;
     const result = await getPurchaseOrdersCollection().findOneAndUpdate(
       { _id: new ObjectId(id) },
-      { $set: set },
+      update,
       { returnDocument: "after" }
     );
     if (!result) return res.status(404).json({ error: "Not found" });

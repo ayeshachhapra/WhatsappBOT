@@ -13,6 +13,9 @@ import {
   PurchaseOrderDocument,
   AgentSettingsDocument,
   AgentActionDocument,
+  EmailFollowUpDocument,
+  SupplierReplyDocument,
+  ProcessedInboundMessageDocument,
 } from "./schema";
 
 const log = createLogger("DB");
@@ -76,6 +79,18 @@ export async function connectDb(): Promise<Db> {
   await agentActions.createIndex({ groupJid: 1, consideredAt: -1 });
   await agentActions.createIndex({ triggerMsgId: 1 });
 
+  const emailFollowUps = db.collection<EmailFollowUpDocument>("emailFollowUps");
+  await emailFollowUps.createIndex({ trackingTag: 1 }, { unique: true });
+  await emailFollowUps.createIndex({ purchaseOrderId: 1, createdAt: -1 });
+  await emailFollowUps.createIndex({ toEmail: 1, sentAt: -1 });
+  await emailFollowUps.createIndex({ status: 1, createdAt: -1 });
+
+  const supplierReplies = db.collection<SupplierReplyDocument>("supplierReplies");
+  await supplierReplies.createIndex({ messageId: 1 }, { unique: true });
+  await supplierReplies.createIndex({ followUpId: 1, receivedAt: -1 });
+  await supplierReplies.createIndex({ isMatched: 1, receivedAt: -1 });
+  await supplierReplies.createIndex({ fromEmail: 1, receivedAt: -1 });
+
   log.info("Indexes ensured");
   return db;
 }
@@ -123,6 +138,18 @@ export function getAgentSettingsCollection(): Collection<AgentSettingsDocument> 
 
 export function getAgentActionsCollection(): Collection<AgentActionDocument> {
   return getDb().collection<AgentActionDocument>("agentActions");
+}
+
+export function getEmailFollowUpsCollection(): Collection<EmailFollowUpDocument> {
+  return getDb().collection<EmailFollowUpDocument>("emailFollowUps");
+}
+
+export function getSupplierRepliesCollection(): Collection<SupplierReplyDocument> {
+  return getDb().collection<SupplierReplyDocument>("supplierReplies");
+}
+
+export function getProcessedInboundMessagesCollection(): Collection<ProcessedInboundMessageDocument> {
+  return getDb().collection<ProcessedInboundMessageDocument>("processedInboundMessages");
 }
 
 const DEFAULT_AGENT_SETTINGS: Omit<AgentSettingsDocument, "updatedAt"> = {

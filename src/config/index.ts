@@ -46,4 +46,13 @@ export const config = {
 
   // Pipeline / drafter
   followupLookbackHours: parseIntOrDefault(process.env.FOLLOWUP_LOOKBACK_HOURS, 24),
+
+  // Email follow-ups (Postmark inbound)
+  emailFollowUps: {
+    inboundCcEmail: process.env.INBOUND_CC_EMAIL || "ayesha@moviant.ai",
+    webhookUser: process.env.INBOUND_WEBHOOK_USER || "postmark",
+    webhookPassword: process.env.INBOUND_WEBHOOK_PASSWORD || "",
+    replyToDomain: process.env.REPLY_TO_DOMAIN || "moviant.ai",
+    replyToLocalPart: process.env.REPLY_TO_LOCAL_PART || "dev",
+  },
 };
